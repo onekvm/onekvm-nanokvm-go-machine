@@ -2,7 +2,12 @@ CC ?= cc
 CFLAGS ?= -O2
 PYTHON ?= python3
 
-.PHONY: test test-boot-inputs test-boot-splash
+.PHONY: all clean test test-boot-inputs test-boot-splash
+
+# OE recipes install files directly; their default configure runs `make clean`.
+all:
+
+clean:
 
 test: test-boot-inputs test-boot-splash
 
