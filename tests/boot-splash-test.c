@@ -33,8 +33,8 @@ static void check_error_message(void)
 {
     uint16_t plain[WIDTH * HEIGHT], text[WIDTH * HEIGHT];
     const char *message = "OneKVM NanoKVM storage migration: rootfs A is neither SquashFS nor EROFS; refusing initialization";
-    render(plain, 0, 2, &labels_en, NULL);
-    render(text, 0, 2, &labels_en, message);
+    render(plain, 0, 2, 0, &labels_en, NULL);
+    render(text, 0, 2, 0, &labels_en, message);
     assert(memcmp(plain, text, sizeof(plain)) != 0);
     unsigned header_pixels = 0;
     for (unsigned y = 0; y < 42; y++)
@@ -67,11 +67,11 @@ static void check_error_message(void)
     assert(last_row_pixels > 0);
 
     /* Boot/install layouts ignore error text, and empty text keeps old layout. */
-    render(plain, 0, 0, &labels_en, NULL);
-    render(text, 0, 0, &labels_en, message);
+    render(plain, 0, 0, 0, &labels_en, NULL);
+    render(text, 0, 0, 0, &labels_en, message);
     assert(!memcmp(plain, text, sizeof(plain)));
-    render(plain, 0, 2, &labels_en, NULL);
-    render(text, 0, 2, &labels_en, "");
+    render(plain, 0, 2, 0, &labels_en, NULL);
+    render(text, 0, 2, 0, &labels_en, "");
     assert(!memcmp(plain, text, sizeof(plain)));
 
     char output[] = "/tmp/onekvm-splash-message-XXXXXX";
@@ -118,19 +118,19 @@ static void check_desk(void)
         assert(language_labels("zh-TW") == language_labels("zh_tw"));
         assert(language_labels("unknown") == &labels_en);
         for (unsigned stage = 0; stage <= 7; stage++) {
-            render(en, stage, 0, &labels_en, NULL);
-            render(zh, stage, 0, &labels_zh, NULL);
-            render(tw, stage, 0, &labels_zh_tw, NULL);
+            render(en, stage, 0, 0, &labels_en, NULL);
+            render(zh, stage, 0, 0, &labels_zh, NULL);
+            render(tw, stage, 0, 0, &labels_zh_tw, NULL);
             assert(memcmp(en, zh, sizeof(en)) != 0);
             assert(memcmp(en, tw, sizeof(en)) != 0);
         }
-        render(en, 0, 1, &labels_en, NULL);
-        render(zh, 0, 1, &labels_zh, NULL);
+        render(en, 0, 1, 0, &labels_en, NULL);
+        render(zh, 0, 1, 0, &labels_zh, NULL);
         assert(memcmp(en, zh, sizeof(en)) != 0);
         {
             uint16_t saved_en[WIDTH * HEIGHT], saved_zh[WIDTH * HEIGHT];
-            render(saved_en, 0, 2, &labels_en, NULL);
-            render(saved_zh, 0, 2, &labels_zh, NULL);
+            render(saved_en, 0, 2, 0, &labels_en, NULL);
+            render(saved_zh, 0, 2, 0, &labels_zh, NULL);
             assert(memcmp(en, saved_en, sizeof(en)) != 0);
             assert(memcmp(saved_en, saved_zh, sizeof(saved_en)) != 0);
         }
@@ -169,7 +169,6 @@ static void check_go_render(void)
 {
     static uint16_t bounded[WIDTH * HEIGHT + 2];
     const struct splash_labels *all[] = { &labels_en, &labels_zh, &labels_zh_tw };
-    const uint16_t background = rgb565(8, 11, 17);
 
     for (unsigned language = 0; language < 3; language++) {
         for (unsigned mode = 0; mode <= 10; mode++) {
@@ -177,18 +176,18 @@ static void check_go_render(void)
             int failed = mode <= 7 ? 0 : (int)mode - 8;
             const char *message = mode == 10 ? "OneKVM Go: NFS mount failed" : NULL;
             bounded[0] = bounded[WIDTH * HEIGHT + 1] = 0x1234;
-            render(bounded + 1, stage, failed ? failed : (mode == 10 ? 2 : 0),
+            render(bounded + 1, stage, failed ? failed : (mode == 10 ? 2 : 0), 100,
                    all[language], message);
             assert(bounded[0] == 0x1234 && bounded[WIDTH * HEIGHT + 1] == 0x1234);
         }
     }
 
     /* The boot logo sits in the vertically centered 172-row layout. */
-    render(bounded + 1, 0, 0, &labels_en, NULL);
+    render(bounded + 1, 0, 0, 0, &labels_en, NULL);
     unsigned top = HEIGHT, bottom = 0;
     for (unsigned y = 0; y < HEIGHT; y++)
         for (unsigned x = 0; x < WIDTH; x++)
-            if (bounded[1 + y * WIDTH + x] != background) {
+            if (bounded[1 + y * WIDTH + x] != background()) {
                 if (y < top)
                     top = y;
                 bottom = y;
@@ -231,14 +230,255 @@ static void check_go(void)
 }
 #endif
 
+/* Boot bar and animator tests run for both panel orientations. */
+static unsigned fill_width(const uint16_t *frame)
+{
+    unsigned width = 0;
+    for (unsigned x = 0; x < BOOT_BAR_WIDTH; x++)
+        width += frame[(BOOT_BAR_Y + 1) * WIDTH + BOOT_BAR_X + x] == bar_fill();
+    return width;
+}
+
+static int stage_index(const char *name)
+{
+    for (int i = 0; i < BOOT_STAGES; i++)
+        if (!strcmp(boot_stages[i].name, name))
+            return i;
+    assert(!"unknown checkpoint");
+    return -1;
+}
+
+static void check_boot_progress(size_t stride)
+{
+    uint16_t start[WIDTH * HEIGHT], later[WIDTH * HEIGHT], scratch[WIDTH * HEIGHT];
+    size_t size = stride * PANEL_HEIGHT, band, first = boot_bar_band(stride, &band);
+    uint8_t *pixels = malloc(size), *expected = malloc(size), *before = malloc(size);
+    assert(pixels && expected && before);
+
+    /* The bar lies inside the 172-row layout, under the caption. */
+    assert((int)BOOT_BAR_Y >= (int)TOP_PAD && BOOT_BAR_Y + BAR_HEIGHT <= TOP_PAD + LAYOUT_HEIGHT);
+    assert(BOOT_BAR_X >= 1 && BOOT_BAR_X + BOOT_BAR_WIDTH + 1 <= WIDTH);
+
+    /* The boot screen always carries the bar; other layouts never do. */
+    render(start, 0, 0, 5, &labels_zh, NULL);
+    render(later, 0, 0, 60, &labels_zh, NULL);
+    assert(has_boot_bar(start) && has_boot_bar(later));
+    assert(fill_width(start) == BOOT_BAR_WIDTH * 5 / 100);
+    assert(fill_width(later) == BOOT_BAR_WIDTH * 60 / 100);
+    render(scratch, 0, 0, 100, &labels_en, NULL);
+    assert(fill_width(scratch) == BOOT_BAR_WIDTH);
+    for (unsigned y = 0; y < HEIGHT; y++)
+        for (unsigned x = 0; x < WIDTH; x++)
+            if (y < BOOT_BAR_Y || y >= BOOT_BAR_Y + BAR_HEIGHT ||
+                x < BOOT_BAR_X || x >= BOOT_BAR_X + BOOT_BAR_WIDTH)
+                assert(start[y * WIDTH + x] == later[y * WIDTH + x]);
+    for (unsigned stage = 1; stage <= 7; stage++) {
+        render(scratch, stage, 0, 0, &labels_en, NULL);
+        assert(!has_boot_bar(scratch));
+    }
+    render(scratch, 0, 1, 0, &labels_en, NULL);
+    assert(!has_boot_bar(scratch));
+    render(scratch, 0, 2, 0, &labels_en, "message");
+    assert(!has_boot_bar(scratch));
+
+    /* A bar-only update keeps the caption and touches only the bar band. */
+    memset(pixels, 0xa5, size);
+    rotate_panel(pixels, stride, start);
+    memcpy(before, pixels, size);
+    memset(expected, 0xa5, size);
+    rotate_panel(expected, stride, later);
+    assert(update_boot_bar(pixels, stride, scratch, 60) == 1);
+    assert(!memcmp(pixels, expected, size));
+    assert(!memcmp(pixels, before, first));
+    assert(!memcmp(pixels + first + band, before + first + band, size - first - band));
+    unrotate_panel(scratch, pixels, stride);
+    assert(!memcmp(scratch, later, sizeof(later)));
+
+    /* Without a boot bar, for example over an install screen, nothing changes. */
+    render(scratch, 3, 0, 0, &labels_en, NULL);
+    rotate_panel(pixels, stride, scratch);
+    memcpy(before, pixels, size);
+    assert(update_boot_bar(pixels, stride, scratch, 60) == 0);
+    assert(!memcmp(pixels, before, size));
+
+    assert(parse_percent("0") == 0 && parse_percent("100") == 100 && parse_percent("085") == 85);
+    assert(parse_percent("storage") == boot_stages[stage_index("storage")].percent);
+    assert(parse_percent("screen") == boot_stages[stage_index("screen")].percent);
+    assert(parse_percent("done") == 100);
+    assert(parse_percent("Screen") < 0 && parse_percent("later") < 0);
+    assert(parse_percent("") < 0 && parse_percent("101") < 0 && parse_percent("-1") < 0 &&
+           parse_percent("5%") < 0 && parse_percent("1000") < 0);
+    {
+        char *bad[] = { "splash", "--output", "/dev/null", "progress", "50", NULL };
+        assert(splash_cli_main(5, bad) == 2);
+        char *range[] = { "splash", "--progress", "200", "boot", NULL };
+        assert(splash_cli_main(4, range) == 2);
+        char *missing[] = { "splash", "progress", NULL };
+        assert(splash_cli_main(2, missing) == 2);
+    }
+    free(pixels);
+    free(expected);
+    free(before);
+}
+
+/* Native panel rows holding the bar plus one background pixel on each side. */
+static size_t bar_edge_band(size_t stride, size_t *size)
+{
+    return column_band(BOOT_BAR_X - 1, BOOT_BAR_X + BOOT_BAR_WIDTH + 1, stride, size);
+}
+
+static void write_file(int fd, const uint8_t *pixels, size_t size)
+{
+    assert(pwrite(fd, pixels, size, 0) == (ssize_t)size);
+}
+
+static void read_file(int fd, uint8_t *pixels, size_t size)
+{
+    assert(pread(fd, pixels, size, 0) == (ssize_t)size);
+}
+
+static void check_animation(size_t stride)
+{
+    uint16_t frame[WIDTH * HEIGHT], expected[WIDTH * HEIGHT];
+    size_t size = stride * PANEL_HEIGHT;
+    uint8_t *pixels = malloc(size), *before = malloc(size);
+    char path[] = "/tmp/onekvm-splash-fb-XXXXXX";
+    int fd = mkstemp(path), basic = stage_index("basic");
+    assert(pixels && before && fd >= 0);
+    unlink(path);
+
+    /* Stage table: rising checkpoints; easing stays short of the next one. */
+    for (int i = 0; i + 1 < BOOT_STAGES; i++) {
+        unsigned next = percent_width(boot_stages[i + 1].percent), last = 0;
+        assert(boot_stages[i].percent < boot_stages[i + 1].percent && boot_stages[i].next_ms);
+        assert(boot_stage(percent_width(boot_stages[i].percent)) == i);
+        assert(boot_stage(next - 1) == i);
+        for (unsigned long ms = 0; ms <= 600000; ms = ms ? ms * 2 : 10) {
+            unsigned target = boot_stage_target(i, ms);
+            assert(target >= last && target < next);
+            last = target;
+        }
+        /* Steady until the usual duration, at 90% of the way by then. */
+        {
+            unsigned base = percent_width(boot_stages[i].percent), usual = boot_stages[i].next_ms;
+            unsigned half = boot_stage_target(i, usual / 2) - base, full = boot_stage_target(i, usual) - base;
+            assert(full == (next - base) * 9 / 10);
+            assert(half + 1 >= full / 2 && half <= full / 2 + 1);
+        }
+    }
+    assert(boot_stages[BOOT_STAGES - 1].percent == 100 && boot_stage(0) == -1);
+    /* The root-system units and the screen service name these checkpoints. */
+    assert(stage_index("storage") >= 0 && stage_index("early") > stage_index("storage") &&
+           stage_index("sysinit") > stage_index("early") && basic > stage_index("sysinit") &&
+           stage_index("screen") == basic + 1);
+
+    /* Painted columns match a fully rendered bar of the same width. */
+    {
+        render(frame, 0, 0, 15, &labels_en, NULL);
+        memset(pixels, 0xa5, size);
+        rotate_panel(pixels, stride, frame);
+        paint_bar(pixels, stride, percent_width(15) - 2, 70);
+        unrotate_panel(frame, pixels, stride);
+        render(expected, 0, 0, 0, &labels_en, NULL);
+        for (unsigned y = 0; y < BAR_HEIGHT; y++)
+            for (unsigned x = 0; x < BOOT_BAR_WIDTH; x++)
+                expected[(BOOT_BAR_Y + y) * WIDTH + BOOT_BAR_X + x] = boot_bar_pixel(x, y, 70);
+        assert(!memcmp(frame, expected, sizeof(frame)));
+    }
+
+    /* The panel reader sees the bar and its fill. */
+    {
+        uint16_t row[WIDTH];
+        render(frame, 0, 0, 40, &labels_zh, NULL);
+        rotate_panel(pixels, stride, frame);
+        panel_bar_row(row, pixels, stride);
+        assert(boot_bar_row_valid(row) && boot_bar_row_fill(row) == percent_width(40));
+        render(frame, 4, 0, 0, &labels_zh, NULL);
+        rotate_panel(pixels, stride, frame);
+        panel_bar_row(row, pixels, stride);
+        assert(!boot_bar_row_valid(row));
+    }
+
+    /* Running the animator moves the bar forward, never past the next checkpoint. */
+    render(frame, 0, 0, boot_stages[basic].percent, &labels_en, NULL);
+    memset(pixels, 0xa5, size);
+    rotate_panel(pixels, stride, frame);
+    write_file(fd, pixels, size);
+    memcpy(before, pixels, size);
+    stop_animation = 0;
+    assert(animate_fd(fd, stride, 700) == 0);
+    read_file(fd, pixels, size);
+    unrotate_panel(frame, pixels, stride);
+    {
+        unsigned fill = boot_bar_row_fill(frame + (BOOT_BAR_Y + 1) * WIDTH);
+        size_t band_size, offset = bar_edge_band(stride, &band_size);
+        assert(fill > percent_width(boot_stages[basic].percent) &&
+               fill < percent_width(boot_stages[basic + 1].percent));
+        assert(!memcmp(pixels, before, offset));
+        assert(!memcmp(pixels + offset + band_size, before + offset + band_size, size - offset - band_size));
+        for (size_t row = 0; row < PANEL_HEIGHT; row++)
+            for (size_t byte = PANEL_WIDTH * 2; byte < stride; byte++)
+                assert(pixels[row * stride + byte] == 0xa5);
+    }
+
+    /* A checkpoint never shortens a longer bar. */
+    assert(update_boot_bar(pixels, stride, frame, boot_stages[basic].percent) == 0);
+    assert(update_boot_bar(pixels, stride, frame, boot_stages[basic + 1].percent) == 1);
+
+    /* Only rows that differ are copied; others keep what the panel has. */
+    {
+        size_t band_size, offset = boot_bar_band(stride, &band_size);
+        uint8_t *panel = malloc(size);
+        assert(panel);
+        memcpy(panel, pixels, size);
+        memcpy(before, pixels, size);
+        before[offset + stride + 5] ^= 1;
+        panel[offset + 2 * stride + 7] ^= 1;
+        copy_changed_rows(panel, before, offset, band_size, stride);
+        assert(!memcmp(panel, before, size));
+        free(panel);
+    }
+
+    /* Without a boot bar the animator stops at once and writes nothing. */
+    render(frame, 0, 1, 0, &labels_en, NULL);
+    rotate_panel(pixels, stride, frame);
+    write_file(fd, pixels, size);
+    memcpy(before, pixels, size);
+    assert(animate_fd(fd, stride, 5000) == 0);
+    read_file(fd, pixels, size);
+    assert(!memcmp(pixels, before, size));
+
+    close(fd);
+    free(pixels);
+    free(before);
+}
+
+#ifdef ONEKVM_SPLASH_GO
+/* Go U-Boot draws 2% and 4% before Linux; the initramfs continues above them. */
+static void check_go_checkpoints(void)
+{
+    assert(boot_stages[0].percent > 4 && !strcmp(boot_stages[0].name, "initramfs"));
+    assert(stage_index("storage") == 1);
+}
+#endif
+
 int main(void)
 {
 #ifdef ONEKVM_SPLASH_GO
     check_go();
-    puts("Go boot splash pixel format, layout and stride tests passed");
+    check_go_checkpoints();
+    check_boot_progress(480);
+    check_boot_progress(512);
+    check_animation(480);
+    check_animation(512);
+    puts("Go boot splash pixel format, layout, stride, progress and animation tests passed");
 #else
     check_desk();
-    puts("boot splash pixel format, rotation and stride tests passed");
+    check_boot_progress(344);
+    check_boot_progress(360);
+    check_animation(344);
+    check_animation(360);
+    puts("boot splash pixel format, rotation, stride, progress and animation tests passed");
 #endif
     return 0;
 }

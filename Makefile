@@ -14,7 +14,10 @@ test: test-boot-inputs test-boot-splash
 test-boot-inputs:
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
 
+# The Desk orientation also runs: both share the boot bar's panel mapping.
 test-boot-splash:
 	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -DONEKVM_SPLASH_GO \
-	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test-go" && "$$work/test-go"
+	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test-go" && "$$work/test-go" && \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test-desk" && "$$work/test-desk"

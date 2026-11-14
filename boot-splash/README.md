@@ -58,3 +58,16 @@ The NanoKVM Go U-Boot draws the same boot frame on the 240×284 ST7789P3 before
 Linux starts. `generate-assets.py --uboot-header PATH` writes it in the panel's
 native order as `onekvm_go_logo_runs`, the U-Boot source's
 `drivers/video/axera/bootlogo/onekvm_go_logo.h`.
+
+## Boot bar
+
+The boot screen carries a progress bar under the caption. Named checkpoints
+set it, and the screen service's first frame replaces it. Between checkpoints
+`animate` keeps it moving: steadily to 90% of the way to the next checkpoint
+over that stage's usual duration, then ever slower, never reaching it. Every
+writer only lengthens the fill. Bar updates go through a shared mapping, so the
+panel driver resends only the touched rows, and hold an advisory lock on the
+framebuffer that full-frame writes take too. `finish` stops the animator and
+waits for it to exit; the animator also stops when the bar disappears and after
+two minutes. `progress PERCENT|CHECKPOINT` changes nothing unless the panel
+shows a boot screen drawn by this program.
