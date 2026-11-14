@@ -82,4 +82,4 @@ switch_root. `systemd/onekvm-boot-progress-*.service` mark `early` when systemd
 starts units, `sysinit` and `basic`; they order only among themselves and never
 hold up a target. The screen service marks `screen` when it opens the panel and
 runs `finish` before its first frame. The Go percentages and durations in
-`boot_stages` are placeholders until measured on a Go.
+`boot_stages` come from three cold boots of a Go from an SD slot.

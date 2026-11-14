@@ -151,12 +151,13 @@ static const struct {
      * initramfs draws `initramfs`, starts the animator and marks `storage`
      * before switch_root; root-system units mark early, sysinit and basic, and
      * the screen service marks screen when it opens the panel.
-     * PLACEHOLDER: estimated from the A/B SD timeline (initramfs screen about
-     * 2.5 s and switch_root about 5.5 s after power-on, root system as on the
-     * Pro Desk); replace with values measured on a Go.
+     * Measured over three cold boots of a NanoKVM Go from an SD slot: Linux
+     * starts 4.0 s after the logo and the first screen frame follows 15.7 s
+     * later. Percentages share that span evenly above U-Boot's 4%; each
+     * duration is the mean time to the next checkpoint.
      */
-    { "initramfs", 10, 3000 }, { "storage", 28, 1000 }, { "early", 34, 3000 },
-    { "sysinit", 52, 1500 }, { "basic", 61, 2500 }, { "screen", 76, 4000 },
+    { "initramfs", 17, 2200 }, { "storage", 30, 2300 }, { "early", 45, 3400 },
+    { "sysinit", 65, 2200 }, { "basic", 79, 2000 }, { "screen", 91, 1500 },
     { "done", 100, 0 },
 #else
     /* Firstboot marks storage; the root system and screen service the rest. */
