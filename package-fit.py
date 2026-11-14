@@ -14,8 +14,9 @@ import struct
 import subprocess
 import tempfile
 
-# The FIT must end below 0x48000000, where U-Boot stops reading.
-FIT_LIMIT = 0x48000000 - 0x44400000
+# U-Boot reads the FIT to 0x44400000 and stops at the kernel DT's 12 KiB
+# crash@45ffd000; its own memory lies above that, below 0x48000000.
+FIT_LIMIT = 0x45FFD000 - 0x44400000
 # Same DT room as dtb.img: the DT and 64 KiB of fixups stay below 0x43100000.
 DTB_LIMIT = 1024 * 1024 - 65536
 COMPATIBLE = "sipeed,nanokvm-go"
