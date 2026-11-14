@@ -26,8 +26,9 @@ Used by the `onekvm-distro` firmware, boot image and SD image recipes. None of t
 | Tool | Output |
 | --- | --- |
 | `package-firmware.py` | ROM `boot.bin` (signed SPL, two copies), `atf.img` (BL31) and `uboot.bin` |
-| `package-boot.py` | Axera `kernel.img` (AArch64 Image with initramfs) and `dtb.img`; rejects images that would overlap BL31 or the DTB |
-| `build-sd.py` | A/B SD image; checks the firmware and boot files against their manifests and the root image against the slot size |
+| `package-fit.py` | `boot.itb` for the mainline U-Boot: one FIT with the AArch64 Image (with initramfs, gzip) and the Go DTB, each with a SHA-256 hash; rejects the same images as `package-boot.py`, a DTB that is not for the Go, and a FIT larger than the U-Boot load window |
+| `package-boot.py` | Axera `kernel.img` (AArch64 Image with initramfs) and `dtb.img` for the vendor U-Boot; rejects images that would overlap BL31 or the DTB |
+| `build-sd.py` | A/B SD image from either boot format; checks the firmware and boot files against their manifests and the root image against the slot size |
 
 ## SD card layout
 
@@ -36,20 +37,28 @@ Same slot sizes as NanoKVM Pro SD, 512-byte sectors:
 | Partition | Start sector | Content |
 | --- | ---: | --- |
 | MBR | 0 | Partition table only. BootROM and SPL load `boot.bin` and the files after it from the first FAT partition |
-| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, `kernel-a.img`/`dtb-a.img`, `kernel-b.img`/`dtb-b.img`, `boot-slot`, and the `onekvm/` settings folder |
+| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, the boot images of both slots, `boot-slot`, and the `onekvm/` settings folder |
 | p2, 128 MiB | 264192 | Read-only root A, SquashFS |
 | p3, 128 MiB | 526336 | Read-only root B, SquashFS; the image writes the same root to both slots |
 | p4, userdata | 788480 | Created on the first SD boot up to the end of the card and formatted f2fs. Existing f2fs or ext4 userdata is kept |
 
-`boot-slot` holds `A` or `B`. U-Boot loads that slot's kernel and DTB, or the other
+Each slot's boot images depend on the U-Boot:
+
+| U-Boot | Slot A | Slot B |
+| --- | --- | --- |
+| Mainline | `boot-a.itb` | `boot-b.itb` |
+| Vendor | `kernel-a.img`, `dtb-a.img` | `kernel-b.img`, `dtb-b.img` |
+
+`boot-slot` holds `A` or `B`. U-Boot loads that slot's boot images, or the other
 slot's when they are missing or invalid, and passes `rauc.slot=` to Linux. The
 initramfs mounts the slot's root read-only below an overlay whose `upper` and `work`
 directories on userdata both slots share; `/mnt/storage` is the userdata `storage`
 directory. Before mounting it, the initramfs removes upper copies of files that
 the new image ships, as on NanoKVM Pro, so they cannot hide the image's versions.
 If userdata cannot be mounted, Go still boots, and changes last until the
-next reboot. A card without `boot-slot` keeps the earlier layout: `kernel.img` and
-`dtb.img` on FAT, and an ext4 root in p2 that grows to the end of the card.
+next reboot. A card without `boot-slot` keeps the earlier layout: `boot.itb` (mainline
+U-Boot) or `kernel.img` and `dtb.img` (vendor U-Boot) on FAT, and an ext4 root in p2 that
+grows to the end of the card.
 
 ## Wi-Fi NFS root
 
@@ -82,7 +91,7 @@ go through a 5 second hardware watchdog reset.
 
 ## Tests
 
-`make test` checks the boot inputs (`package-boot.py`), the boot splash rendering, the boot bar and its hand-off from the initramfs to the root system.
+`make test` checks the boot inputs (`package-fit.py`, `package-boot.py`), the SD layout, the boot splash rendering, the boot bar and its hand-off from the initramfs to the root system.
 
 ## License
 

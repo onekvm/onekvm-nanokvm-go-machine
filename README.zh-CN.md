@@ -25,8 +25,9 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | 工具 | 产物 |
 | --- | --- |
 | `package-firmware.py` | ROM 读取的 `boot.bin`（签名 SPL，两份）、`atf.img`（BL31）和 `uboot.bin` |
-| `package-boot.py` | Axera 格式的 `kernel.img`（含 initramfs 的 AArch64 Image）和 `dtb.img`；会与 BL31 或 DTB 重叠的镜像直接拒绝 |
-| `build-sd.py` | A/B SD 镜像；按 manifest 核对固件和启动文件，并检查根镜像不超过槽容量 |
+| `package-fit.py` | 主线 U-Boot 用的 `boot.itb`：一个 FIT，含 AArch64 Image（含 initramfs，gzip 压缩）和 Go DTB，各带 SHA-256 哈希；拒绝 `package-boot.py` 会拒绝的镜像、不是 Go 的 DTB 和超出 U-Boot 载入区的 FIT |
+| `package-boot.py` | 厂商 U-Boot 用的 Axera 格式 `kernel.img`（含 initramfs 的 AArch64 Image）和 `dtb.img`；会与 BL31 或 DTB 重叠的镜像直接拒绝 |
+| `build-sd.py` | 由任一种启动格式生成 A/B SD 镜像；按 manifest 核对固件和启动文件，并检查根镜像不超过槽容量 |
 
 ## SD 卡布局
 
@@ -35,17 +36,25 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | 分区 | 起始扇区 | 内容 |
 | --- | ---: | --- |
 | MBR | 0 | 只有分区表。BootROM 和 SPL 从第一个 FAT 分区读取 `boot.bin` 及后续文件 |
-| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、`kernel-a.img`/`dtb-a.img`、`kernel-b.img`/`dtb-b.img`、`boot-slot` 和 `onekvm/` 设置目录 |
+| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、两个槽的启动镜像、`boot-slot` 和 `onekvm/` 设置目录 |
 | p2，128 MiB | 264192 | 只读根分区 A，SquashFS |
 | p3，128 MiB | 526336 | 只读根分区 B，SquashFS；镜像在两个槽写入同一份根 |
 | p4，userdata | 788480 | 首次从 SD 启动时建到卡尾并格式化为 f2fs；已有的 f2fs 或 ext4 userdata 保留 |
 
-`boot-slot` 的内容是 `A` 或 `B`。U-Boot 加载该槽的内核和 DTB，缺失或无效时改用另一槽，
+各槽的启动镜像取决于 U-Boot：
+
+| U-Boot | 槽 A | 槽 B |
+| --- | --- | --- |
+| 主线 | `boot-a.itb` | `boot-b.itb` |
+| 厂商 | `kernel-a.img`、`dtb-a.img` | `kernel-b.img`、`dtb-b.img` |
+
+`boot-slot` 的内容是 `A` 或 `B`。U-Boot 加载该槽的启动镜像，缺失或无效时改用另一槽，
 并把 `rauc.slot=` 传给 Linux。initramfs 以只读方式挂载该槽的根，上面叠一层 overlay，
 `upper` 和 `work` 目录在 userdata 上，两个槽共用；`/mnt/storage` 是 userdata 的 `storage`
 目录。挂载前 initramfs 会删除 upper 中属于新镜像的文件副本（同 NanoKVM Pro），避免旧副本
 遮住镜像里的新版本。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。没有 `boot-slot` 的卡
-沿用旧布局：FAT 上是 `kernel.img`、`dtb.img`，p2 是 ext4 根分区并扩展到整张卡。
+沿用旧布局：FAT 上是 `boot.itb`（主线 U-Boot）或 `kernel.img`、`dtb.img`（厂商 U-Boot），p2 是 ext4
+根分区并扩展到整张卡。
 
 ## Wi-Fi NFS 根目录
 
@@ -77,7 +86,7 @@ OneKVM 的重启同样通过 5 秒硬件 watchdog 复位完成。
 
 ## 测试
 
-`make test` 检查启动输入（`package-boot.py`）、启动 logo 绘制、启动进度条及其从 initramfs 到根系统的交接。
+`make test` 检查启动输入（`package-fit.py`、`package-boot.py`）、SD 布局、启动 logo 绘制、启动进度条及其从 initramfs 到根系统的交接。
 
 ## 许可证
 

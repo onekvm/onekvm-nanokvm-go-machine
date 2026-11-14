@@ -5,7 +5,7 @@
 
   0       MBR. BootROM and SPL only read its partition table: FatFs takes the
           first FAT partition and loads 0:boot.bin. The boot code area stays zero.
-  2048    p1 FAT32 128 MiB, active: SPL, BL31, U-Boot, kernel/DTB per slot, boot-slot
+  2048    p1 FAT32 128 MiB, active: SPL, BL31, U-Boot, boot images per slot, boot-slot
   264192  p2 read-only root A, 128 MiB SquashFS
   526336  p3 read-only root B, 128 MiB, the same root
   788480  p4 userdata, created by the initramfs on first boot up to the card end
@@ -28,16 +28,28 @@ SQUASHFS_MAGIC = 0x73717368  # "hsqs" at offset 0
 FIRMWARE = ("boot.bin", "atf.img", "uboot.bin")
 
 
+def slot_files(boot_manifest):
+    """Boot image -> per-slot FAT name pattern, by the boot manifest's format.
+
+    A mainline U-Boot boots one FIT per slot; the vendor U-Boot boots an Axera
+    kernel and DTB capsule pair per slot.
+    """
+    if boot_manifest.get("format", "capsule") == "fit":
+        return {"boot.itb": "boot-%s.itb"}
+    return {"kernel.img": "kernel-%s.img", "dtb.img": "dtb-%s.img"}
+
+
 def check_inputs(firmware, boot):
     manifest = json.loads((firmware / "manifest.json").read_text())
-    capsules = json.loads((boot / "manifest.json").read_text())
-    if manifest["architecture"] != "arm64" or capsules["architecture"] != "arm64":
+    images = json.loads((boot / "manifest.json").read_text())
+    if manifest["architecture"] != "arm64" or images["architecture"] != "arm64":
         raise ValueError("ARM64 firmware and boot images must be paired")
     for directory, name, digest in (
             *((firmware, name, manifest[name]["sha256"]) for name in FIRMWARE),
-            *((boot, name, capsules[name]["sha256"]) for name in ("kernel.img", "dtb.img"))):
+            *((boot, name, images[name]["sha256"]) for name in slot_files(images))):
         if hashlib.sha256((directory / name).read_bytes()).hexdigest() != digest:
             raise ValueError("boot input identity differs: " + name)
+    return images
 
 
 def check_root(rootfs):
@@ -64,7 +76,7 @@ def mbr():
     return bytes(table)
 
 
-def boot_fat(path, firmware, boot):
+def boot_fat(path, firmware, boot, images):
     with path.open("wb") as f:
         f.truncate(BOOT_SECTORS * 512)
     # Hidden sectors = partition start, as on factory cards read by BootROM.
@@ -72,7 +84,7 @@ def boot_fat(path, firmware, boot):
                     str(path)], check=True)
     files = [(firmware / name, name) for name in FIRMWARE]
     for slot in "ab":
-        files += [(boot / "kernel.img", "kernel-%s.img" % slot), (boot / "dtb.img", "dtb-%s.img" % slot)]
+        files += [(boot / name, pattern % slot) for name, pattern in slot_files(images).items()]
     slot_file = path.with_suffix(".slot")
     slot_file.write_text("A\n")
     files.append((slot_file, "boot-slot"))
@@ -87,10 +99,10 @@ def main():
     for name in ("firmware", "boot", "rootfs", "output"):
         p.add_argument("--" + name, type=Path, required=True)
     a = p.parse_args()
-    check_inputs(a.firmware, a.boot)
+    images = check_inputs(a.firmware, a.boot)
     check_root(a.rootfs)
     bootfs = a.output.with_suffix(".fat")
-    boot_fat(bootfs, a.firmware, a.boot)
+    boot_fat(bootfs, a.firmware, a.boot, images)
     with a.output.open("wb") as f:
         f.truncate(USERDATA_START * 512)
         f.write(mbr())

@@ -1,5 +1,7 @@
 """Keep the SD layout readable by BootROM/SPL FatFs and the A/B initramfs."""
+import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import struct
 import tempfile
@@ -44,7 +46,7 @@ class Layout(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sd.check_root(self.root(temp, sd.SQUASHFS_MAGIC, (128 << 20) + 512))
 
-    def test_fat_holds_both_slots_and_selects_a(self):
+    def boot_fat(self, images, names):
         copied = {}
         mkfs = []
 
@@ -56,16 +58,46 @@ class Layout(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in (*sd.FIRMWARE, "kernel.img", "dtb.img"):
+            for name in (*sd.FIRMWARE, *names):
                 (root / name).write_bytes(name.encode())
             with patch.object(sd.subprocess, "run", side_effect=run):
-                sd.boot_fat(root / "boot.fat", root, root)
+                sd.boot_fat(root / "boot.fat", root, root, images)
+        self.assertEqual(copied["::boot-slot"], b"A\n")
+        self.assertEqual(mkfs[mkfs.index("-h") + 1], str(sd.BOOT_START))
+        return copied
+
+    def test_fat_holds_both_capsule_slots_and_selects_a(self):
+        copied = self.boot_fat({"architecture": "arm64"}, ("kernel.img", "dtb.img"))
         self.assertEqual(sorted(copied), sorted([
             "::boot.bin", "::atf.img", "::uboot.bin", "::kernel-a.img", "::dtb-a.img",
             "::kernel-b.img", "::dtb-b.img", "::boot-slot"]))
-        self.assertEqual(copied["::boot-slot"], b"A\n")
-        self.assertEqual(mkfs[mkfs.index("-h") + 1], str(sd.BOOT_START))
         self.assertEqual(copied["::kernel-b.img"], b"kernel.img")
+
+    def test_fat_holds_both_fit_slots_and_selects_a(self):
+        copied = self.boot_fat({"format": "fit", "architecture": "arm64"}, ("boot.itb",))
+        self.assertEqual(sorted(copied), sorted([
+            "::boot.bin", "::atf.img", "::uboot.bin", "::boot-a.itb", "::boot-b.itb",
+            "::boot-slot"]))
+        self.assertEqual(copied["::boot-b.itb"], b"boot.itb")
+
+    def test_inputs_must_match_their_manifests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            firmware, boot = Path(temp) / "firmware", Path(temp) / "boot"
+            firmware.mkdir()
+            boot.mkdir()
+            digests = {}
+            for directory, name in ((firmware, n) for n in sd.FIRMWARE):
+                (directory / name).write_bytes(name.encode())
+                digests[name] = {"sha256": hashlib.sha256(name.encode()).hexdigest()}
+            (firmware / "manifest.json").write_text(json.dumps({"architecture": "arm64", **digests}))
+            (boot / "boot.itb").write_bytes(b"fit")
+            fit = {"format": "fit", "architecture": "arm64",
+                   "boot.itb": {"sha256": hashlib.sha256(b"fit").hexdigest()}}
+            (boot / "manifest.json").write_text(json.dumps(fit))
+            self.assertEqual(sd.check_inputs(firmware, boot), fit)
+            (boot / "boot.itb").write_bytes(b"other")
+            with self.assertRaises(ValueError):
+                sd.check_inputs(firmware, boot)
 
 
 if __name__ == "__main__":
