@@ -53,3 +53,8 @@ The OneKVM SD U-Boot uses the same English boot artwork. The Linux JD9853 driver
 keeps display scanout off through both reset/init passes and enables it only after
 its first full framebuffer transfer. This avoids briefly exposing stale GRAM
 between U-Boot and the early splash. The original eMMC U-Boot is unaffected.
+
+The NanoKVM Go U-Boot draws the same boot frame on the 240×284 ST7789P3 before
+Linux starts. `generate-assets.py --uboot-header PATH` writes it in the panel's
+native order as `onekvm_go_logo_runs`, the U-Boot source's
+`drivers/video/axera/bootlogo/onekvm_go_logo.h`.
