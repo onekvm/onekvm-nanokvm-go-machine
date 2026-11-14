@@ -90,10 +90,11 @@ mount_ab_root() {
     mount -t overlay overlay \
         -o lowerdir=/rofs,upperdir=/userdata/upper,workdir=/userdata/work /newroot ||
         fail 'root overlay mount failed'
-    mkdir -p /newroot/rofs /newroot/media/userdata /newroot/mnt/storage
+    # The slot root stays hidden at /mnt/.rofs, as overlayroot places it.
+    mkdir -p /newroot/mnt/.rofs /newroot/media/userdata /newroot/mnt/storage
     mount --bind /userdata/storage /newroot/mnt/storage &&
         mount --move /userdata /newroot/media/userdata &&
-        mount --move /rofs /newroot/rofs || fail 'cannot move slot mounts'
+        mount --move /rofs /newroot/mnt/.rofs || fail 'cannot move slot mounts'
 }
 
 /usr/libexec/onekvm/onekvm-go-watchdog --boot &
