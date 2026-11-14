@@ -68,7 +68,9 @@ def mbr():
 def boot_fat(path, firmware, boot):
     with path.open("wb") as f:
         f.truncate(BOOT_SECTORS * 512)
-    subprocess.run(["mkfs.vfat", "--invariant", "-F", "32", "-n", "ONEKVMBOOT", str(path)], check=True)
+    # Hidden sectors = partition start, as on factory cards read by BootROM.
+    subprocess.run(["mkfs.vfat", "--invariant", "-F", "32", "-h", str(BOOT_START), "-n", "ONEKVMBOOT",
+                    str(path)], check=True)
     files = [(firmware / name, name) for name in FIRMWARE]
     for slot in "ab":
         files += [(boot / "kernel.img", "kernel-%s.img" % slot), (boot / "dtb.img", "dtb-%s.img" % slot)]

@@ -45,10 +45,13 @@ class Layout(unittest.TestCase):
 
     def test_fat_holds_both_slots_and_selects_a(self):
         copied = {}
+        mkfs = []
 
         def run(command, check):
             if command[0] == "mcopy":
                 copied[command[-1]] = Path(command[-2]).read_bytes()
+            elif command[0] == "mkfs.vfat":
+                mkfs.extend(command)
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -60,6 +63,7 @@ class Layout(unittest.TestCase):
             "::boot.bin", "::atf.img", "::uboot.bin", "::kernel-a.img", "::dtb-a.img",
             "::kernel-b.img", "::dtb-b.img", "::boot-slot"]))
         self.assertEqual(copied["::boot-slot"], b"A\n")
+        self.assertEqual(mkfs[mkfs.index("-h") + 1], str(sd.BOOT_START))
         self.assertEqual(copied["::kernel-b.img"], b"kernel.img")
 
 
