@@ -12,9 +12,9 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 
 | 软件包 | 文件 | 内容 |
 | --- | --- | --- |
-| `onekvm-nanokvm-go-init` | `init`、`boot-splash/` | initramfs 的 `/init`：启动硬件 watchdog、显示启动 logo，然后挂载 SD 根目录或 Wi-Fi NFS 根目录 |
+| `onekvm-nanokvm-go-init` | `init`、`boot-splash/` | initramfs 的 `/init`：启动硬件 watchdog、显示启动 logo，然后把 SD 的根分区槽挂在 userdata overlay 下，或挂载 Wi-Fi NFS 根目录 |
 | `onekvm-nanokvm-go-boot` | `watchdog.c`、`watchdog-handoff`、`go-udhcpc` | 启动阶段 watchdog 喂狗程序及其交接；NFS 根目录的地址、路由和 DNS |
-| `onekvm-machine-nanokvm-go` | `machine.json`、`edid/`、`*.service`、`*.conf`、`99-peripherals.rules`、`grow-root` | 机型身份、EDID 预设、systemd 单元和 drop-in、udev 规则、SD 根分区扩容 |
+| `onekvm-machine-nanokvm-go` | `machine.json`、`edid/`、`*.service`、`*.conf`、`99-peripherals.rules`、`grow-root` | 机型身份、EDID 预设、systemd 单元和 drop-in、udev 规则、单根分区 SD 卡的根分区扩容 |
 
 ## 构建工具
 
@@ -24,14 +24,25 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | --- | --- |
 | `package-firmware.py` | ROM 读取的 `boot.bin`（签名 SPL，两份）、`atf.img`（BL31）和 `uboot.bin` |
 | `package-boot.py` | Axera 格式的 `kernel.img`（含 initramfs 的 AArch64 Image）和 `dtb.img`；会与 BL31 或 DTB 重叠的镜像直接拒绝 |
-| `build-sd.py` | 两分区 SD 镜像；按 manifest 核对固件和启动文件 |
+| `build-sd.py` | A/B SD 镜像；按 manifest 核对固件和启动文件，并检查根镜像不超过槽容量 |
 
 ## SD 卡布局
 
-| 分区 | 内容 |
-| --- | --- |
-| p1，FAT32，128 MiB，卷标 `ONEKVMBOOT` | `boot.bin`、`uboot.bin`、`atf.img`、`kernel.img`、`dtb.img` 和 `onekvm/` 设置目录 |
-| p2，ext4，起始扇区 264192 | 根文件系统，首次从 SD 启动时扩展到整张卡 |
+槽容量与 NanoKVM Pro SD 相同，扇区为 512 字节：
+
+| 分区 | 起始扇区 | 内容 |
+| --- | ---: | --- |
+| MBR | 0 | 只有分区表。BootROM 和 SPL 从第一个 FAT 分区读取 `boot.bin` 及后续文件 |
+| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、`kernel-a.img`/`dtb-a.img`、`kernel-b.img`/`dtb-b.img`、`boot-slot` 和 `onekvm/` 设置目录 |
+| p2，128 MiB | 264192 | 只读根分区 A，EROFS |
+| p3，128 MiB | 526336 | 只读根分区 B，EROFS；镜像在两个槽写入同一份根 |
+| p4，userdata | 788480 | 首次从 SD 启动时建到卡尾并格式化为 f2fs；已有的 f2fs 或 ext4 userdata 保留 |
+
+`boot-slot` 的内容是 `A` 或 `B`。U-Boot 加载该槽的内核和 DTB，缺失或无效时改用另一槽，
+并把 `rauc.slot=` 传给 Linux。initramfs 以只读方式挂载该槽的根，上面叠一层 overlay，
+`upper` 和 `work` 目录在 userdata 上，两个槽共用；`/mnt/storage` 是 userdata 的 `storage`
+目录。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。没有 `boot-slot` 的卡
+沿用旧布局：FAT 上是 `kernel.img`、`dtb.img`，p2 是 ext4 根分区并扩展到整张卡。
 
 ## Wi-Fi NFS 根目录
 

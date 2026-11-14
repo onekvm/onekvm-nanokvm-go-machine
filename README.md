@@ -12,9 +12,9 @@ yet (`hardware_qualified: false` in the firmware manifest).
 
 | Package | Files | Content |
 | --- | --- | --- |
-| `onekvm-nanokvm-go-init` | `init`, `boot-splash/` | Initramfs `/init`: arms the hardware watchdog, shows the boot logo, then mounts the SD root or a Wi-Fi NFS root |
+| `onekvm-nanokvm-go-init` | `init`, `boot-splash/` | Initramfs `/init`: arms the hardware watchdog, shows the boot logo, then mounts the SD root slot below the userdata overlay, or a Wi-Fi NFS root |
 | `onekvm-nanokvm-go-boot` | `watchdog.c`, `watchdog-handoff`, `go-udhcpc` | Boot watchdog feeder and its hand-off; address, routes and DNS for the NFS root |
-| `onekvm-machine-nanokvm-go` | `machine.json`, `edid/`, `*.service`, `*.conf`, `99-peripherals.rules`, `grow-root` | Machine identity, EDID presets, systemd units and drop-ins, udev rules, SD root expansion |
+| `onekvm-machine-nanokvm-go` | `machine.json`, `edid/`, `*.service`, `*.conf`, `99-peripherals.rules`, `grow-root` | Machine identity, EDID presets, systemd units and drop-ins, udev rules, root expansion for single-root SD cards |
 
 ## Build tools
 
@@ -24,14 +24,27 @@ Used by the `onekvm-distro` firmware, boot image and SD image recipes. None of t
 | --- | --- |
 | `package-firmware.py` | ROM `boot.bin` (signed SPL, two copies), `atf.img` (BL31) and `uboot.bin` |
 | `package-boot.py` | Axera `kernel.img` (AArch64 Image with initramfs) and `dtb.img`; rejects images that would overlap BL31 or the DTB |
-| `build-sd.py` | Two-partition SD image; checks the firmware and boot files against their manifests |
+| `build-sd.py` | A/B SD image; checks the firmware and boot files against their manifests and the root image against the slot size |
 
 ## SD card layout
 
-| Partition | Content |
-| --- | --- |
-| p1, FAT32, 128 MiB, label `ONEKVMBOOT` | `boot.bin`, `uboot.bin`, `atf.img`, `kernel.img`, `dtb.img`, and the `onekvm/` settings folder |
-| p2, ext4, from sector 264192 | Root filesystem. The first SD boot grows it to the end of the card |
+Same slot sizes as NanoKVM Pro SD, 512-byte sectors:
+
+| Partition | Start sector | Content |
+| --- | ---: | --- |
+| MBR | 0 | Partition table only. BootROM and SPL load `boot.bin` and the files after it from the first FAT partition |
+| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, `kernel-a.img`/`dtb-a.img`, `kernel-b.img`/`dtb-b.img`, `boot-slot`, and the `onekvm/` settings folder |
+| p2, 128 MiB | 264192 | Read-only root A, EROFS |
+| p3, 128 MiB | 526336 | Read-only root B, EROFS; the image writes the same root to both slots |
+| p4, userdata | 788480 | Created on the first SD boot up to the end of the card and formatted f2fs. Existing f2fs or ext4 userdata is kept |
+
+`boot-slot` holds `A` or `B`. U-Boot loads that slot's kernel and DTB, or the other
+slot's when they are missing or invalid, and passes `rauc.slot=` to Linux. The
+initramfs mounts the slot's root read-only below an overlay whose `upper` and `work`
+directories on userdata both slots share; `/mnt/storage` is the userdata `storage`
+directory. If userdata cannot be mounted, Go still boots, and changes last until the
+next reboot. A card without `boot-slot` keeps the earlier layout: `kernel.img` and
+`dtb.img` on FAT, and an ext4 root in p2 that grows to the end of the card.
 
 ## Wi-Fi NFS root
 
