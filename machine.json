@@ -19,8 +19,8 @@
   "screen_display": {
     "keyboard": "grid",
     "keyboard_layout": "nanokvm-go.json",
-    "rotate": 0,
-    "rotation_offset": 0,
+    "rotate": 90,
+    "rotation_offset": 90,
     "rotations": [0, 90, 180, 270]
   }
 }
