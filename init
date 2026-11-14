@@ -18,8 +18,9 @@ fail() {
     while :; do sleep 10; done
 }
 
+# The initramfs BusyBox od has no -A/-t/-j/-N; hexdump has -s/-n/-e.
 bytes_hex() {
-    od -A n -t x1 -j "$2" -N "$3" "$1" 2>/dev/null | tr -d ' \n'
+    hexdump -v -s "$2" -n "$3" -e '1/1 "%02x"' "$1" 2>/dev/null
 }
 
 part_is() {
