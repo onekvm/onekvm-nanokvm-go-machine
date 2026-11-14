@@ -5,8 +5,8 @@
 Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 `meta-onekvm-nanokvm-go` 构建。
 
-状态：适配中。AArch64 SPL/BL31/U-Boot 尚未通过实机验证（固件 manifest 中
-`hardware_qualified: false`）。
+状态：适配中。AArch64 SPL/BL31/U-Boot 已在一台 Go 上从保留原厂 FAT 格式的 SD 卡冷启动；
+固件 manifest 仍为 `hardware_qualified: false`。
 
 ## 软件包
 
