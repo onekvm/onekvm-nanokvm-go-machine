@@ -71,3 +71,15 @@ framebuffer that full-frame writes take too. `finish` stops the animator and
 waits for it to exit; the animator also stops when the bar disappears and after
 two minutes. `progress PERCENT|CHECKPOINT` changes nothing unless the panel
 shows a boot screen drawn by this program.
+
+On the Go, the U-Boot artwork includes the empty bar, and `--uboot-header` also
+writes its geometry (`ONEKVM_BAR_*`). U-Boot fills 2% once the kernel capsule is
+read and 4% before it starts Linux, and marks the Linux panel node
+`onekvm,boot-logo` so a kernel that knows it keeps the logo instead of resetting
+the panel. The initramfs then draws the boot screen at `initramfs`, starts
+`animate`, which survives switch_root, and marks `storage` just before
+switch_root. `systemd/onekvm-boot-progress-*.service` mark `early` when systemd
+starts units, `sysinit` and `basic`; they order only among themselves and never
+hold up a target. The screen service marks `screen` when it opens the panel and
+runs `finish` before its first frame. The Go percentages and durations in
+`boot_stages` are placeholders until measured on a Go.

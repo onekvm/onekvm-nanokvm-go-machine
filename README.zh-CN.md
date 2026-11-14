@@ -12,7 +12,9 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 
 | 软件包 | 文件 | 内容 |
 | --- | --- | --- |
-| `onekvm-nanokvm-go-init` | `init`、`boot-splash/` | initramfs 的 `/init`：启动硬件 watchdog、显示启动 logo，然后把 SD 的根分区槽挂在 userdata overlay 下，或挂载 Wi-Fi NFS 根目录 |
+| `onekvm-nanokvm-go-init` | `init` | initramfs 的 `/init`：启动硬件 watchdog、显示启动 logo 并让启动进度条持续前进，然后把 SD 的根分区槽挂在 userdata overlay 下，或挂载 Wi-Fi NFS 根目录 |
+| `onekvm-boot-splash` | `boot-splash/` | 屏幕上的启动 logo、启动进度条及其动画进程，供 initramfs、根系统和屏幕服务调用 |
+| `onekvm-boot-progress` | `boot-splash/systemd/` | 根系统启动期间推进启动进度条的 systemd 单元 |
 | `onekvm-nanokvm-go-boot` | `watchdog.c`、`watchdog-handoff`、`go-udhcpc` | 启动阶段 watchdog 喂狗程序及其交接；NFS 根目录的地址、路由和 DNS |
 | `onekvm-machine-nanokvm-go` | `machine.json`、`edid/`、`*.service`、`*.conf`、`99-peripherals.rules`、`grow-root` | 机型身份、EDID 预设、systemd 单元和 drop-in、udev 规则、单根分区 SD 卡的根分区扩容 |
 
@@ -75,7 +77,7 @@ OneKVM 的重启同样通过 5 秒硬件 watchdog 复位完成。
 
 ## 测试
 
-`make test` 检查启动输入（`package-boot.py`）和启动 logo 绘制。
+`make test` 检查启动输入（`package-boot.py`）、启动 logo 绘制、启动进度条及其从 initramfs 到根系统的交接。
 
 ## 许可证
 

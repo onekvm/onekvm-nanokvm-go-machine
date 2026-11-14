@@ -13,7 +13,9 @@ with the factory-formatted FAT; the firmware manifest still says
 
 | Package | Files | Content |
 | --- | --- | --- |
-| `onekvm-nanokvm-go-init` | `init`, `boot-splash/` | Initramfs `/init`: arms the hardware watchdog, shows the boot logo, then mounts the SD root slot below the userdata overlay, or a Wi-Fi NFS root |
+| `onekvm-nanokvm-go-init` | `init` | Initramfs `/init`: arms the hardware watchdog, shows the boot logo and keeps its boot bar moving, then mounts the SD root slot below the userdata overlay, or a Wi-Fi NFS root |
+| `onekvm-boot-splash` | `boot-splash/` | Boot logo, boot bar and its animator on the panel, for the initramfs, the root system and the screen service |
+| `onekvm-boot-progress` | `boot-splash/systemd/` | Units that advance the boot bar while the root system starts |
 | `onekvm-nanokvm-go-boot` | `watchdog.c`, `watchdog-handoff`, `go-udhcpc` | Boot watchdog feeder and its hand-off; address, routes and DNS for the NFS root |
 | `onekvm-machine-nanokvm-go` | `machine.json`, `edid/`, `*.service`, `*.conf`, `99-peripherals.rules`, `grow-root` | Machine identity, EDID presets, systemd units and drop-ins, udev rules, root expansion for single-root SD cards |
 
@@ -80,7 +82,7 @@ go through a 5 second hardware watchdog reset.
 
 ## Tests
 
-`make test` checks the boot inputs (`package-boot.py`) and the boot splash rendering.
+`make test` checks the boot inputs (`package-boot.py`), the boot splash rendering, the boot bar and its hand-off from the initramfs to the root system.
 
 ## License
 
