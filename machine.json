@@ -21,6 +21,7 @@
     "keyboard_layout": "nanokvm-go.json",
     "rotate": 90,
     "rotation_offset": 90,
-    "rotations": [0, 90, 180, 270]
+    "rotations": [0, 90, 180, 270],
+    "touch_calibration": [1, 0, 0, 0.0633, 1.1306, -0.0365]
   }
 }
