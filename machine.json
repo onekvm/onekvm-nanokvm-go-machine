@@ -17,7 +17,7 @@
   },
   "fixed": { "video.source_device": "/dev/video0" },
   "screen_display": {
-    "keyboard": "grid",
+    "keyboard": "nine",
     "keyboard_layout": "nanokvm-go.json",
     "rotate": 90,
     "rotation_offset": 90,
