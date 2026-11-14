@@ -41,7 +41,8 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 `boot-slot` 的内容是 `A` 或 `B`。U-Boot 加载该槽的内核和 DTB，缺失或无效时改用另一槽，
 并把 `rauc.slot=` 传给 Linux。initramfs 以只读方式挂载该槽的根，上面叠一层 overlay，
 `upper` 和 `work` 目录在 userdata 上，两个槽共用；`/mnt/storage` 是 userdata 的 `storage`
-目录。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。没有 `boot-slot` 的卡
+目录。挂载前 initramfs 会删除 upper 中属于新镜像的文件副本（同 NanoKVM Pro），避免旧副本
+遮住镜像里的新版本。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。没有 `boot-slot` 的卡
 沿用旧布局：FAT 上是 `kernel.img`、`dtb.img`，p2 是 ext4 根分区并扩展到整张卡。
 
 ## Wi-Fi NFS 根目录

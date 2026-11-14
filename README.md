@@ -42,7 +42,9 @@ Same slot sizes as NanoKVM Pro SD, 512-byte sectors:
 slot's when they are missing or invalid, and passes `rauc.slot=` to Linux. The
 initramfs mounts the slot's root read-only below an overlay whose `upper` and `work`
 directories on userdata both slots share; `/mnt/storage` is the userdata `storage`
-directory. If userdata cannot be mounted, Go still boots, and changes last until the
+directory. Before mounting it, the initramfs removes upper copies of files that
+the new image ships, as on NanoKVM Pro, so they cannot hide the image's versions.
+If userdata cannot be mounted, Go still boots, and changes last until the
 next reboot. A card without `boot-slot` keeps the earlier layout: `kernel.img` and
 `dtb.img` on FAT, and an ext4 root in p2 that grows to the end of the card.
 

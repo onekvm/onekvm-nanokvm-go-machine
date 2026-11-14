@@ -82,6 +82,10 @@ mount_ab_root() {
     fi
     mkdir -p /userdata/upper /userdata/work /userdata/storage ||
         fail 'cannot prepare userdata'
+    # As on NanoKVM Pro, retire image-owned upper files and record this image
+    # and kernel in the upper, so persistence skips its per-file refresh.
+    /usr/lib/onekvm/initramfs-kernel-overlay /rofs /userdata /userdata/upper "$1" ||
+        echo 'OneKVM Go: image overlay refresh failed; persistence compares files instead'
     # A/B share upper/work; /data lives in the upper as on NanoKVM Pro.
     mount -t overlay overlay \
         -o lowerdir=/rofs,upperdir=/userdata/upper,workdir=/userdata/work /newroot ||
