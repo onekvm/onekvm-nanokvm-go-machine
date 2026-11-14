@@ -34,8 +34,8 @@ Same slot sizes as NanoKVM Pro SD, 512-byte sectors:
 | --- | ---: | --- |
 | MBR | 0 | Partition table only. BootROM and SPL load `boot.bin` and the files after it from the first FAT partition |
 | p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, `kernel-a.img`/`dtb-a.img`, `kernel-b.img`/`dtb-b.img`, `boot-slot`, and the `onekvm/` settings folder |
-| p2, 128 MiB | 264192 | Read-only root A, EROFS |
-| p3, 128 MiB | 526336 | Read-only root B, EROFS; the image writes the same root to both slots |
+| p2, 128 MiB | 264192 | Read-only root A, SquashFS |
+| p3, 128 MiB | 526336 | Read-only root B, SquashFS; the image writes the same root to both slots |
 | p4, userdata | 788480 | Created on the first SD boot up to the end of the card and formatted f2fs. Existing f2fs or ext4 userdata is kept |
 
 `boot-slot` holds `A` or `B`. U-Boot loads that slot's kernel and DTB, or the other

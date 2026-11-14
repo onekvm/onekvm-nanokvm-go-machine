@@ -72,7 +72,7 @@ mount_ab_root() {
     root=/dev/mmcblk1p2
     [ "$1" = B ] && root=/dev/mmcblk1p3
     mkdir -p /rofs /userdata
-    mount -t erofs -o ro "$root" /rofs || fail "slot $1 root mount failed"
+    mount -t squashfs -o ro "$root" /rofs || fail "slot $1 root mount failed"
     if ! { [ -b /dev/mmcblk1p4 ] || create_userdata; } || ! mount_userdata; then
         # Settings are not kept, but the device stays reachable and the
         # userdata partition is left untouched for repair.

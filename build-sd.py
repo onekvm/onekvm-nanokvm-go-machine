@@ -6,7 +6,7 @@
   0       MBR. BootROM and SPL only read its partition table: FatFs takes the
           first FAT partition and loads 0:boot.bin. The boot code area stays zero.
   2048    p1 FAT32 128 MiB, active: SPL, BL31, U-Boot, kernel/DTB per slot, boot-slot
-  264192  p2 read-only root A, 128 MiB EROFS
+  264192  p2 read-only root A, 128 MiB SquashFS
   526336  p3 read-only root B, 128 MiB, the same root
   788480  p4 userdata, created by the initramfs on first boot up to the card end
 """
@@ -24,7 +24,7 @@ SLOT_SECTORS = 262144
 ROOT_A = BOOT_START + BOOT_SECTORS
 ROOT_B = ROOT_A + SLOT_SECTORS
 USERDATA_START = ROOT_B + SLOT_SECTORS
-EROFS_MAGIC = 0xE0F5E1E2
+SQUASHFS_MAGIC = 0x73717368  # "hsqs" at offset 0
 FIRMWARE = ("boot.bin", "atf.img", "uboot.bin")
 
 
@@ -43,10 +43,9 @@ def check_inputs(firmware, boot):
 def check_root(rootfs):
     size = rootfs.stat().st_size
     with rootfs.open("rb") as f:
-        f.seek(1024)
         magic = struct.unpack("<I", f.read(4))[0]
-    if magic != EROFS_MAGIC:
-        raise ValueError("root image is not EROFS")
+    if magic != SQUASHFS_MAGIC:
+        raise ValueError("root image is not SquashFS")
     if not 0 < size <= SLOT_SECTORS * 512:
         raise ValueError("root image is %d bytes; a slot holds %d" % (size, SLOT_SECTORS * 512))
 

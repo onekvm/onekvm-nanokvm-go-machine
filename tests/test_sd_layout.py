@@ -27,21 +27,22 @@ class Layout(unittest.TestCase):
         ])
         self.assertEqual(sd.USERDATA_START, 788480)
 
-    def root(self, directory, magic, size):
+    def root(self, directory, magic, size, offset=0):
         path = Path(directory) / "root"
         with path.open("wb") as f:
             f.truncate(size)
-            f.seek(1024)
+            f.seek(offset)
             f.write(struct.pack("<I", magic))
         return path
 
-    def test_root_must_be_erofs_within_one_slot(self):
+    def test_root_must_be_squashfs_within_one_slot(self):
         with tempfile.TemporaryDirectory() as temp:
-            sd.check_root(self.root(temp, sd.EROFS_MAGIC, 128 << 20))
+            sd.check_root(self.root(temp, sd.SQUASHFS_MAGIC, 128 << 20))
             with self.assertRaises(ValueError):
-                sd.check_root(self.root(temp, 0xEF53, 4096))
+                # An EROFS root carries its magic at offset 1024.
+                sd.check_root(self.root(temp, 0xE0F5E1E2, 4096, offset=1024))
             with self.assertRaises(ValueError):
-                sd.check_root(self.root(temp, sd.EROFS_MAGIC, (128 << 20) + 512))
+                sd.check_root(self.root(temp, sd.SQUASHFS_MAGIC, (128 << 20) + 512))
 
     def test_fat_holds_both_slots_and_selects_a(self):
         copied = {}

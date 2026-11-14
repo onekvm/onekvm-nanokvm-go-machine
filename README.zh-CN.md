@@ -34,8 +34,8 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | --- | ---: | --- |
 | MBR | 0 | 只有分区表。BootROM 和 SPL 从第一个 FAT 分区读取 `boot.bin` 及后续文件 |
 | p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、`kernel-a.img`/`dtb-a.img`、`kernel-b.img`/`dtb-b.img`、`boot-slot` 和 `onekvm/` 设置目录 |
-| p2，128 MiB | 264192 | 只读根分区 A，EROFS |
-| p3，128 MiB | 526336 | 只读根分区 B，EROFS；镜像在两个槽写入同一份根 |
+| p2，128 MiB | 264192 | 只读根分区 A，SquashFS |
+| p3，128 MiB | 526336 | 只读根分区 B，SquashFS；镜像在两个槽写入同一份根 |
 | p4，userdata | 788480 | 首次从 SD 启动时建到卡尾并格式化为 f2fs；已有的 f2fs 或 ext4 userdata 保留 |
 
 `boot-slot` 的内容是 `A` 或 `B`。U-Boot 加载该槽的内核和 DTB，缺失或无效时改用另一槽，
