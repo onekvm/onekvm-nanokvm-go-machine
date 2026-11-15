@@ -6,7 +6,7 @@
   "soc_name": "AX620Q",
   "video_auto_bitrate_max_kbps": 20000,
   "detected": { "wifi": true },
-  "capabilities": { "audio": true, "recovery": false },
+  "capabilities": { "audio": true, "ethernet": false, "recovery": false },
   "defaults": {
     "network.hostname": "onekvm-nanokvm-go",
     "video.fps": "60",
