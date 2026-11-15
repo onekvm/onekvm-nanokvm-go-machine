@@ -97,6 +97,48 @@ mount_ab_root() {
         mount --move /rofs /newroot/mnt/.rofs || fail 'cannot move slot mounts'
 }
 
+# The shared Recovery hook is an initramfs-framework module: it expects the
+# framework's console messages and fatal().
+msg() { echo "$@" >/dev/console; }
+info() { echo "$@" >/dev/console; }
+fatal() { echo "$@" >/dev/console; exit 1; }
+
+# Called by the hook once Recovery is chosen. Writing a card can outlast the
+# boot grace, so the feeder keeps the watchdog fed without it.
+go_recovery_enter() {
+    kill -USR1 "$watchdog_pid" || echo 'OneKVM Go: watchdog feeder missing; hardware reset pending'
+    [ -n "$splash" ] || return 0
+    onekvm-boot-splash finish || :
+    onekvm-boot-splash --message 'Recovery: the USB port shows the whole SD card as a drive. Write the OneKVM Go image to it, then restart.' recovery || :
+}
+
+# Explicit requests, the boot counter (when $1 is 1) and factory reset run
+# before any SD partition is mounted. A hook failure ends only its subshell,
+# so normal boot continues. In Recovery the subshell never returns; the
+# traps let BusyBox reboot/poweroff, which signal PID 1, act from its console.
+recovery_check() {
+    [ -r /init.d/20-recovery ] || return 0
+    trap 'sync; reboot -f' TERM
+    trap 'sync; poweroff -f' USR2
+    trap 'sync; halt -f' USR1
+    (
+        bootparam_onekvm_recovery=
+        for argument in $(cat /proc/cmdline); do
+            case "$argument" in
+                onekvm_recovery=*|onekvm.recovery=*) bootparam_onekvm_recovery=${argument#*=} ;;
+            esac
+        done
+        . /init.d/20-recovery
+        recovery_board_enter() { go_recovery_enter; }
+        # Without Ethernet there is no Recovery web page.
+        ONEKVM_RECOVERY_WEB=0
+        ONEKVM_RECOVERY_COUNT_BOOTS=$1
+        recovery_run
+    ) </dev/console &
+    wait $! || echo 'OneKVM Go: Recovery check failed; continuing normal boot'
+    trap - TERM USR1 USR2
+}
+
 # Returns once the timer is armed and the feeder's PID is published.
 /usr/libexec/onekvm/onekvm-go-watchdog --boot &&
     read -r watchdog_pid </run/onekvm/boot-watchdog.pid || {
@@ -119,7 +161,27 @@ until [ -b /dev/mmcblk1p1 ]; do
     [ "$attempt" -lt 20 ] || fail 'SD boot partition not found'
     sleep 1
 done
+slot=
+for argument in $(cat /proc/cmdline); do
+    case "$argument" in
+        rauc.slot=A) slot=A ;;
+        rauc.slot=B) slot=B ;;
+    esac
+done
 mount -t vfat -o ro /dev/mmcblk1p1 /boot-config || fail 'cannot read SD boot configuration'
+if [ -n "$slot" ]; then
+    nfs_card=
+    [ ! -s /boot-config/onekvm/nfs-root ] || nfs_card=1
+    # Recovery mounts, exports and rewrites the card itself.
+    umount /boot-config || fail 'cannot release SD boot configuration'
+    if [ -z "$nfs_card" ] && ab_layout && [ ! -b /dev/mmcblk1p4 ]; then
+        # Recovery validates all four partitions: a new card gets userdata first.
+        create_userdata || echo 'OneKVM Go: cannot create userdata partition'
+    fi
+    # The NFS root never clears the boot counter, so it does not count.
+    if [ -n "$nfs_card" ]; then recovery_check 0; else recovery_check 1; fi
+    mount -t vfat -o ro /dev/mmcblk1p1 /boot-config || fail 'cannot read SD boot configuration'
+fi
 
 # Data files, never source shell code from the FAT partition. Secrets stay on SD.
 if [ -s /boot-config/onekvm/nfs-root ]; then
@@ -175,13 +237,6 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     # Keep supplicant alive across switch_root, with its config/control socket in /run.
     # It needs no files from the former initramfs once connected.
 else
-    slot=
-    for argument in $(cat /proc/cmdline); do
-        case "$argument" in
-            rauc.slot=A) slot=A ;;
-            rauc.slot=B) slot=B ;;
-        esac
-    done
     if [ -n "$slot" ]; then
         # U-Boot read boot-slot; persistence and RAUC read rauc.slot.
         mount_ab_root "$slot"

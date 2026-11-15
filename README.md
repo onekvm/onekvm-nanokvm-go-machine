@@ -13,7 +13,7 @@ with the factory-formatted FAT; the firmware manifest still says
 
 | Package | Files | Content |
 | --- | --- | --- |
-| `onekvm-nanokvm-go-init` | `init` | Initramfs `/init`: arms the hardware watchdog, shows the boot logo and keeps its boot bar moving, then mounts the SD root slot below the userdata overlay, or a Wi-Fi NFS root |
+| `onekvm-nanokvm-go-init` | `init` | Initramfs `/init`: arms the hardware watchdog, shows the boot logo and keeps its boot bar moving, runs the shared Recovery checks, then mounts the SD root slot below the userdata overlay, or a Wi-Fi NFS root |
 | `onekvm-boot-splash` | `boot-splash/` | Boot logo, boot bar and its animator on the panel, for the initramfs, the root system and the screen service |
 | `onekvm-boot-progress` | `boot-splash/systemd/` | Units that advance the boot bar while the root system starts |
 | `onekvm-nanokvm-go-boot` | `watchdog.c`, `watchdog-handoff`, `go-udhcpc` | Boot watchdog feeder and its hand-off; address, routes and DNS for the NFS root |
@@ -77,12 +77,25 @@ The root is mounted with NFSv3 over TCP (`hard,nolock`); the export must allow r
 writes. The initramfs keeps the Wi-Fi connection for the whole session, so do not
 change that Wi-Fi connection while the system is running. The NFS root is never resized.
 
+## Recovery
+
+Before mounting any SD partition, the initramfs runs the Recovery hook from
+`onekvm-nanokvm-recovery`. It enters Recovery when BOOT is held at power-on,
+after Recovery in the system settings, with `onekvm_recovery=1`, or after ten
+boots that did not run normally for two minutes; it also performs a requested
+factory reset. A new card gets its userdata partition first, because Recovery
+checks all four partitions. NFS boots never clear the counter, so they do not
+count. Recovery exports the whole SD card as USB mass storage with an ACM
+console, also on UART3, and the screen says to write the image to it. In
+the console, `reboot` restarts. If the checks fail, normal boot continues.
+
 ## Watchdog
 
 Any boot failure in the initramfs waits for a hardware watchdog reset instead of
 stopping. The boot feeder gives Linux up to 240 seconds to reach the runtime
-watchdog, which takes over before `onekvm.service` starts. OneKVM reboots also
-go through a 5 second hardware watchdog reset.
+watchdog, which takes over before `onekvm.service` starts. In Recovery it keeps
+feeding without that limit. OneKVM reboots also go through a 5 second hardware
+watchdog reset.
 
 ## EDID
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 /* Small initramfs feeder, bounded boot grace and explicit hardware reset. */
+/* SIGUSR1 lifts the grace for Recovery; SIGUSR2 hands the timer over. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -51,11 +52,12 @@ static int publish_pid(int run, pid_t pid)
  */
 static int boot(void)
 {
-    sigset_t release;
-    sigemptyset(&release);
-    sigaddset(&release, SIGUSR2);
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGUSR1);
+    sigaddset(&signals, SIGUSR2);
     /* Blocked before the PID is published: --release may signal at once. */
-    if (sigprocmask(SIG_BLOCK, &release, NULL)) { perror("watchdog signals"); return 1; }
+    if (sigprocmask(SIG_BLOCK, &signals, NULL)) { perror("watchdog signals"); return 1; }
     int run = open(RUN_DIR, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (run < 0) { perror("watchdog run directory"); return 1; }
     int fd = arm(BOOT_TIMEOUT_SEC);
@@ -69,21 +71,28 @@ static int boot(void)
         return 1;
     }
     struct timespec start, now, step = { 2, 0 };
+    int recovery = 0;
     clock_gettime(CLOCK_MONOTONIC, &start);
     for (;;) {
         clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec - start.tv_sec >= BOOT_GRACE_SEC) {
+        if (!recovery && now.tv_sec - start.tv_sec >= BOOT_GRACE_SEC) {
             /* The PID file stays: --release then refuses the takeover. */
             fprintf(stderr, "OneKVM Go: boot grace expired; hardware reset pending\n");
             close(fd);
             return 1;
         }
         if (ioctl(fd, WDIOC_KEEPALIVE, 0)) { perror("watchdog feed"); return 1; }
-        if (sigtimedwait(&release, NULL, &step) == SIGUSR2) {
+        int received = sigtimedwait(&signals, NULL, &step);
+        if (received == SIGUSR2) {
             /* No 'V': keep hardware armed while the runtime owner opens it. */
             close(fd);
             unlinkat(run, PID_FILE, 0);
             return 0;
+        }
+        if (received == SIGUSR1 && !recovery) {
+            /* Recovery runs from RAM until the user restarts; a hang still resets. */
+            recovery = 1;
+            fprintf(stderr, "OneKVM Go: Recovery; watchdog fed without the boot grace\n");
         }
     }
 }

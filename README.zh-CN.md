@@ -12,7 +12,7 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 
 | 软件包 | 文件 | 内容 |
 | --- | --- | --- |
-| `onekvm-nanokvm-go-init` | `init` | initramfs 的 `/init`：启动硬件 watchdog、显示启动 logo 并让启动进度条持续前进，然后把 SD 的根分区槽挂在 userdata overlay 下，或挂载 Wi-Fi NFS 根目录 |
+| `onekvm-nanokvm-go-init` | `init` | initramfs 的 `/init`：启动硬件 watchdog、显示启动 logo 并让启动进度条持续前进，执行共用的 Recovery 检查，然后把 SD 的根分区槽挂在 userdata overlay 下，或挂载 Wi-Fi NFS 根目录 |
 | `onekvm-boot-splash` | `boot-splash/` | 屏幕上的启动 logo、启动进度条及其动画进程，供 initramfs、根系统和屏幕服务调用 |
 | `onekvm-boot-progress` | `boot-splash/systemd/` | 根系统启动期间推进启动进度条的 systemd 单元 |
 | `onekvm-nanokvm-go-boot` | `watchdog.c`、`watchdog-handoff`、`go-udhcpc` | 启动阶段 watchdog 喂狗程序及其交接；NFS 根目录的地址、路由和 DNS |
@@ -71,10 +71,20 @@ FAT 分区上没有 `onekvm/nfs-root` 时，Go 从 SD 根目录启动。要通�
 Wi-Fi 连接由 initramfs 建立并保持到关机，系统运行时不要修改这条 Wi-Fi 连接。
 NFS 根目录不会扩容。
 
+## Recovery
+
+挂载任何 SD 分区之前，initramfs 先运行 `onekvm-nanokvm-recovery` 的 Recovery hook。
+开机按住 BOOT、在系统设置中点 Recovery、命令行带 `onekvm_recovery=1`，或连续 10 次
+启动都没有正常运行满 2 分钟时进入 Recovery；请求恢复出厂设置时也在这里执行。新卡先
+创建 userdata 分区，因为 Recovery 会校验全部 4 个分区。NFS 启动从不清零计数，因此不
+计数。Recovery 把整张 SD 卡导出为 USB 大容量存储并提供 ACM 控制台（UART3 上也有），
+屏幕提示把镜像写入该磁盘。控制台中执行 `reboot` 即可重启。检查失败时继续正常启动。
+
 ## Watchdog
 
 initramfs 中任何启动失败都会等待硬件 watchdog 复位，不会停住。启动阶段喂狗最多
 240 秒，期间须进入运行时 watchdog；运行时 watchdog 在 `onekvm.service` 启动前接管。
+Recovery 中持续喂狗，不受该时限约束。
 OneKVM 的重启同样通过 5 秒硬件 watchdog 复位完成。
 
 ## EDID

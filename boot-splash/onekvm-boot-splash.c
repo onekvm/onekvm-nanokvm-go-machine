@@ -237,7 +237,11 @@ static void render(uint16_t *frame, unsigned stage, int failed, unsigned progres
 {
     for (unsigned i = 0; i < WIDTH * HEIGHT; i++)
         frame[i] = background();
-    if (failed) {
+    if (failed < 0) {
+        /* Recovery: its instructions above the logo, without a progress bar. */
+        draw_log_message(frame, message && *message ? message : "Recovery");
+        draw_asset(frame, &logo_install, TOP_PAD + 51);
+    } else if (failed) {
         int has_message = message && *message;
         unsigned shift = TOP_PAD + (has_message ? 28 : 0);
         if (has_message)
@@ -719,6 +723,8 @@ int main(int argc, char **argv)
         failed = 1;
     } else if (argc == 2 && !strcmp(argv[1], "error-saved")) {
         failed = 2;
+    } else if (argc == 2 && !strcmp(argv[1], "recovery")) {
+        failed = -1;
     } else if (argc == 3 && !strcmp(argv[1], "progress") && !preview &&
                (progress = parse_percent(argv[2])) >= 0) {
         bar_only = 1;
@@ -727,7 +733,7 @@ int main(int argc, char **argv)
         stage = (unsigned)(argv[2][0] - '0');
     } else {
         fprintf(stderr, "Usage: onekvm-boot-splash [--language en|zh|zh_tw] [--message TEXT] [--progress PERCENT] "
-                "[--output FILE.ppm | --framebuffer /dev/fb0] {boot | install STAGE(1-7) | error | error-saved}\n"
+                "[--output FILE.ppm | --framebuffer /dev/fb0] {boot | install STAGE(1-7) | error | error-saved | recovery}\n"
                 "       onekvm-boot-splash [--framebuffer /dev/fb0] {progress PERCENT|CHECKPOINT | animate}\n"
                 "       onekvm-boot-splash finish\n");
         return 2;
