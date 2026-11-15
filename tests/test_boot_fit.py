@@ -42,7 +42,7 @@ def image(size=64, image_size=None):
 
 
 class Fit(unittest.TestCase):
-    def package(self, kernel=None, tree=None, fit_size=64):
+    def package(self, kernel=None, tree=None, fit_size=64, build_id="0.7.0-onekvm-nanokvm-go-r1"):
         seen = {}
 
         def mkimage(command, cwd, check, stdout):
@@ -57,7 +57,7 @@ class Fit(unittest.TestCase):
             (root / "Image").write_bytes(kernel or image())
             (root / "go.dtb").write_bytes(tree or dtb())
             with patch.object(fit.subprocess, "run", side_effect=mkimage):
-                manifest = fit.package(root / "Image", root / "go.dtb", root / "out")
+                manifest = fit.package(root / "Image", root / "go.dtb", root / "out", build_id)
             self.assertEqual(json.loads((root / "out/manifest.json").read_text()), manifest)
             self.assertEqual(sorted(p.name for p in (root / "out").iterdir()), ["boot.itb", "manifest.json"])
         return manifest, seen
@@ -73,6 +73,18 @@ class Fit(unittest.TestCase):
                      'algo = "sha256";', 'default = "go";'):
             self.assertIn(line, seen["its"])
         self.assertEqual(seen["its"].count('algo = "sha256";'), 2)
+
+    def test_names_the_build_in_the_configuration(self):
+        manifest, seen = self.package(build_id="0.7.0-onekvm-nanokvm-go-r42")
+        self.assertEqual(manifest["build-id"], "0.7.0-onekvm-nanokvm-go-r42")
+        config = seen["its"][seen["its"].index("go {"):]
+        self.assertIn('onekvm,build-id = "0.7.0-onekvm-nanokvm-go-r42";', config)
+        self.assertNotIn("@BUILD_ID@", seen["its"])
+
+    def test_rejects_a_build_id_unsafe_for_the_command_line(self):
+        for bad in ("", "a b", 'a"b', "a=b", "x" * 97):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.package(build_id=bad)
 
     def test_reads_the_root_compatible(self):
         self.assertEqual(fit.root_compatible(dtb()), ["sipeed,nanokvm-go", "axera,ax620q"])
@@ -99,7 +111,7 @@ class Fit(unittest.TestCase):
             root = Path(temp)
             (root / "Image").write_bytes(image(4096))
             (root / "go.dtb").write_bytes(dtb())
-            fit.package(root / "Image", root / "go.dtb", root / "out")
+            fit.package(root / "Image", root / "go.dtb", root / "out", "0.7.0-onekvm-nanokvm-go-r1")
             listing = subprocess.run(["mkimage", "-l", str(root / "out/boot.itb")], check=True,
                                      capture_output=True, text=True).stdout
         self.assertIn("Load Address: 0x40200000", listing)

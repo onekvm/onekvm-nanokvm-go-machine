@@ -25,7 +25,7 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | 工具 | 产物 |
 | --- | --- |
 | `package-firmware.py` | ROM 读取的 `boot.bin`（签名 SPL，两份）、`atf.img`（BL31）和 `uboot.bin` |
-| `package-fit.py` | 主线 U-Boot 用的 `boot.itb`：一个 FIT，含 AArch64 Image（含 initramfs，gzip 压缩）和 Go DTB，各带 SHA-256 哈希；拒绝 `package-boot.py` 会拒绝的镜像、不是 Go 的 DTB 和超出 U-Boot 载入区的 FIT |
+| `package-fit.py` | 主线 U-Boot 用的 `boot.itb`：一个 FIT，含 AArch64 Image（含 initramfs，gzip 压缩）和 Go DTB，各带 SHA-256 哈希，配置里记有镜像的 build ID；拒绝 `package-boot.py` 会拒绝的镜像、不是 Go 的 DTB 和超出 U-Boot 载入区的 FIT |
 | `package-boot.py` | 厂商 U-Boot 用的 Axera 格式 `kernel.img`（含 initramfs 的 AArch64 Image）和 `dtb.img`；会与 BL31 或 DTB 重叠的镜像直接拒绝 |
 | `build-sd.py` | 由任一种启动格式生成 A/B SD 镜像；按 manifest 核对固件和启动文件，并检查根镜像不超过槽容量 |
 
@@ -49,7 +49,8 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | 厂商 | `kernel-a.img`、`dtb-a.img` | `kernel-b.img`、`dtb-b.img` |
 
 `boot-slot` 的内容是 `A` 或 `B`。U-Boot 加载该槽的启动镜像，缺失或无效时改用另一槽，
-并把 `rauc.slot=` 传给 Linux。initramfs 以只读方式挂载该槽的根，上面叠一层 overlay，
+并把 `rauc.slot=` 和 FIT 里的 `onekvm.build-id=` 传给 Linux。更新装入的槽先试启动：
+`boot-trial/tries` 记着剩余次数，用完后 U-Boot 改启另一槽；该槽通过健康检查后 Linux 删除这个文件。initramfs 以只读方式挂载该槽的根，上面叠一层 overlay，
 `upper` 和 `work` 目录在 userdata 上，两个槽共用；`/mnt/storage` 是 userdata 的 `storage`
 目录。挂载前 initramfs 会删除 upper 中属于新镜像的文件副本（同 NanoKVM Pro），避免旧副本
 遮住镜像里的新版本。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。没有 `boot-slot` 的卡

@@ -26,7 +26,7 @@ Used by the `onekvm-distro` firmware, boot image and SD image recipes. None of t
 | Tool | Output |
 | --- | --- |
 | `package-firmware.py` | ROM `boot.bin` (signed SPL, two copies), `atf.img` (BL31) and `uboot.bin` |
-| `package-fit.py` | `boot.itb` for the mainline U-Boot: one FIT with the AArch64 Image (with initramfs, gzip) and the Go DTB, each with a SHA-256 hash; rejects the same images as `package-boot.py`, a DTB that is not for the Go, and a FIT larger than the U-Boot load window |
+| `package-fit.py` | `boot.itb` for the mainline U-Boot: one FIT with the AArch64 Image (with initramfs, gzip) and the Go DTB, each with a SHA-256 hash, and the image's build ID in its configuration; rejects the same images as `package-boot.py`, a DTB that is not for the Go, and a FIT larger than the U-Boot load window |
 | `package-boot.py` | Axera `kernel.img` (AArch64 Image with initramfs) and `dtb.img` for the vendor U-Boot; rejects images that would overlap BL31 or the DTB |
 | `build-sd.py` | A/B SD image from either boot format; checks the firmware and boot files against their manifests and the root image against the slot size |
 
@@ -50,7 +50,10 @@ Each slot's boot images depend on the U-Boot:
 | Vendor | `kernel-a.img`, `dtb-a.img` | `kernel-b.img`, `dtb-b.img` |
 
 `boot-slot` holds `A` or `B`. U-Boot loads that slot's boot images, or the other
-slot's when they are missing or invalid, and passes `rauc.slot=` to Linux. The
+slot's when they are missing or invalid, and passes `rauc.slot=` and the FIT's
+`onekvm.build-id=` to Linux. A slot installed by an update boots on trial:
+`boot-trial/tries` holds its attempts left, and U-Boot boots the other slot once
+none are left. Linux deletes the file when the slot passes its health check. The
 initramfs mounts the slot's root read-only below an overlay whose `upper` and `work`
 directories on userdata both slots share; `/mnt/storage` is the userdata `storage`
 directory. Before mounting it, the initramfs removes upper copies of files that
