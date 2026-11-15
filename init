@@ -97,18 +97,12 @@ mount_ab_root() {
         mount --move /rofs /newroot/mnt/.rofs || fail 'cannot move slot mounts'
 }
 
-/usr/libexec/onekvm/onekvm-go-watchdog --boot &
-watchdog_pid=$!
-attempt=0
-until [ -s /run/onekvm/boot-watchdog.pid ]; do
-    kill -0 "$watchdog_pid" 2>/dev/null || {
-        echo 'OneKVM Go: watchdog could not be armed; refusing unattended boot'
-        while :; do sleep 10; done
-    }
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 10 ] || fail 'watchdog startup timed out'
-    sleep 1
-done
+# Returns once the timer is armed and the feeder's PID is published.
+/usr/libexec/onekvm/onekvm-go-watchdog --boot &&
+    read -r watchdog_pid </run/onekvm/boot-watchdog.pid || {
+    echo 'OneKVM Go: watchdog could not be armed; refusing unattended boot'
+    while :; do sleep 10; done
+}
 
 # The logo stays until the screen service draws; display errors never stop boot.
 # The boot bar continues from U-Boot; the animator keeps it moving, survives
@@ -214,14 +208,6 @@ if [ -n "$nfs_wifi" ]; then
         mount -t sysfs sysfs /sys && mount --bind /newroot/run /run ||
         fail 'cannot keep Wi-Fi supplicant filesystems'
 fi
-# Move the feeder's root before switch_root deletes the old initramfs.
-kill -USR1 "$watchdog_pid"
-attempt=0
-until [ -e /newroot/run/onekvm/boot-watchdog.ready ]; do
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 10 ] || fail 'watchdog root handoff failed'
-    sleep 1
-done
 echo 'OneKVM Go: switching root; hardware watchdog remains armed'
 exec switch_root /newroot /sbin/init
 fail 'switch_root failed'
