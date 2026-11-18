@@ -10,6 +10,7 @@
   "defaults": {
     "network.hostname": "onekvm-nanokvm-go",
     "video.fps": "60",
+    "audio.enabled": "false",
     "audio.device": "hw:UAC1Gadget,0",
     "audio.source": "hdmi",
     "usb.vendor_id": "0x359f",
