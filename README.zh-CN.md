@@ -36,9 +36,9 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | 分区 | 起始扇区 | 内容 |
 | --- | ---: | --- |
 | MBR | 0 | 只有分区表。BootROM 和 SPL 从第一个 FAT 分区读取 `boot.bin` 及后续文件 |
-| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、两个槽的启动镜像、`boot-slot` 和 `onekvm/` 设置目录 |
+| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、两个槽的启动镜像、`boot-slot` 和 `onekvm/` 设置目录。SD 镜像只带槽 A 的启动镜像 |
 | p2，128 MiB | 264192 | 只读根分区 A，SquashFS |
-| p3，128 MiB | 526336 | 只读根分区 B，SquashFS；镜像在两个槽写入同一份根 |
+| p3，128 MiB | 526336 | 只读根分区 B，SquashFS；SD 镜像不包含此分区，见下文 |
 | p4，userdata | 788480 | 首次从 SD 启动时建到卡尾并格式化为 f2fs；已有的 f2fs 或 ext4 userdata 保留 |
 
 各槽的启动镜像取决于 U-Boot：
@@ -53,7 +53,13 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 `boot-trial/tries` 记着剩余次数，用完后 U-Boot 改启另一槽；该槽通过健康检查后 Linux 删除这个文件。initramfs 以只读方式挂载该槽的根，上面叠一层 overlay，
 `upper` 和 `work` 目录在 userdata 上，两个槽共用；`/mnt/storage` 是 userdata 的 `storage`
 目录。挂载前 initramfs 会删除 upper 中属于新镜像的文件副本（同 NanoKVM Pro），避免旧副本
-遮住镜像里的新版本。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。没有 `boot-slot` 的卡
+遮住镜像里的新版本。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。
+
+SD 镜像止于根分区 A，写入时不碰 p3 和 userdata。镜像的 FAT 里有 `onekvm/install-b`：从槽 A 首次启动时显示安装界面，
+把根分区 A 复制到 p3、把槽 A 的启动镜像复制为槽 B 的，从卡上回读校验两份副本后删除该文件。安装中断或失败时下次启动重做；
+完成前槽 A 启动时没有可回退的槽。更新写入槽 B 时也会删除该文件。
+
+没有 `boot-slot` 的卡
 沿用旧布局：FAT 上是 `boot.itb`（主线 U-Boot）或 `kernel.img`、`dtb.img`（厂商 U-Boot），p2 是 ext4
 根分区并扩展到整张卡。
 

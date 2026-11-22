@@ -37,9 +37,9 @@ Same slot sizes as NanoKVM Pro SD, 512-byte sectors:
 | Partition | Start sector | Content |
 | --- | ---: | --- |
 | MBR | 0 | Partition table only. BootROM and SPL load `boot.bin` and the files after it from the first FAT partition |
-| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, the boot images of both slots, `boot-slot`, and the `onekvm/` settings folder |
+| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, the boot images of both slots, `boot-slot`, and the `onekvm/` settings folder. The SD image carries slot A's boot images only |
 | p2, 128 MiB | 264192 | Read-only root A, SquashFS |
-| p3, 128 MiB | 526336 | Read-only root B, SquashFS; the image writes the same root to both slots |
+| p3, 128 MiB | 526336 | Read-only root B, SquashFS. The SD image does not cover it; see below |
 | p4, userdata | 788480 | Created on the first SD boot up to the end of the card and formatted f2fs. Existing f2fs or ext4 userdata is kept |
 
 Each slot's boot images depend on the U-Boot:
@@ -59,7 +59,16 @@ directories on userdata both slots share; `/mnt/storage` is the userdata `storag
 directory. Before mounting it, the initramfs removes upper copies of files that
 the new image ships, as on NanoKVM Pro, so they cannot hide the image's versions.
 If userdata cannot be mounted, Go still boots, and changes last until the
-next reboot. A card without `boot-slot` keeps the earlier layout: `boot.itb` (mainline
+next reboot.
+
+The SD image ends with root A, so writing it leaves p3 and userdata untouched.
+Its FAT holds `onekvm/install-b`: the first boot from slot A shows the
+installing screen, copies root A to p3 and slot A's boot images to slot B, reads
+both copies back from the card and then deletes the file. An interrupted or
+failed install runs again at the next boot; until it completes slot A boots
+without a fallback slot. An update written to slot B deletes the file too.
+
+A card without `boot-slot` keeps the earlier layout: `boot.itb` (mainline
 U-Boot) or `kernel.img` and `dtb.img` (vendor U-Boot) on FAT, and an ext4 root in p2 that
 grows to the end of the card.
 

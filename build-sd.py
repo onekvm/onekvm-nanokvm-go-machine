@@ -5,10 +5,14 @@
 
   0       MBR. BootROM and SPL only read its partition table: FatFs takes the
           first FAT partition and loads 0:boot.bin. The boot code area stays zero.
-  2048    p1 FAT32 128 MiB, active: SPL, BL31, U-Boot, boot images per slot, boot-slot
+  2048    p1 FAT32 128 MiB, active: SPL, BL31, U-Boot, slot A boot image, boot-slot
   264192  p2 read-only root A, 128 MiB SquashFS
-  526336  p3 read-only root B, 128 MiB, the same root
+  526336  p3 read-only root B, 128 MiB
   788480  p4 userdata, created by the initramfs on first boot up to the card end
+
+The image carries slot A only and ends with root A. Its FAT holds
+onekvm/install-b, so the first boot from slot A copies root A and the slot A
+boot image into slot B. Writing the image leaves p3 and p4 untouched.
 """
 import argparse
 import hashlib
@@ -26,6 +30,7 @@ ROOT_B = ROOT_A + SLOT_SECTORS
 USERDATA_START = ROOT_B + SLOT_SECTORS
 SQUASHFS_MAGIC = 0x73717368  # "hsqs" at offset 0
 FIRMWARE = ("boot.bin", "atf.img", "uboot.bin")
+INSTALL_MARKER = "onekvm/install-b"
 
 
 def slot_files(boot_manifest):
@@ -83,15 +88,18 @@ def boot_fat(path, firmware, boot, images):
     subprocess.run(["mkfs.vfat", "--invariant", "-F", "32", "-h", str(BOOT_START), "-n", "ONEKVMBOOT",
                     str(path)], check=True)
     files = [(firmware / name, name) for name in FIRMWARE]
-    for slot in "ab":
-        files += [(boot / name, pattern % slot) for name, pattern in slot_files(images).items()]
+    files += [(boot / name, pattern % "a") for name, pattern in slot_files(images).items()]
     slot_file = path.with_suffix(".slot")
     slot_file.write_text("A\n")
     files.append((slot_file, "boot-slot"))
+    marker = path.with_suffix(".install")
+    marker.write_text("The first boot from slot A copies it into slot B.\n")
     for source, name in files:
         subprocess.run(["mcopy", "-i", str(path), str(source), "::" + name], check=True)
     subprocess.run(["mmd", "-i", str(path), "::onekvm"], check=True)
+    subprocess.run(["mcopy", "-i", str(path), str(marker), "::" + INSTALL_MARKER], check=True)
     slot_file.unlink()
+    marker.unlink()
 
 
 def main():
@@ -104,10 +112,10 @@ def main():
     bootfs = a.output.with_suffix(".fat")
     boot_fat(bootfs, a.firmware, a.boot, images)
     with a.output.open("wb") as f:
-        f.truncate(USERDATA_START * 512)
+        f.truncate(ROOT_A * 512 + a.rootfs.stat().st_size)
         f.write(mbr())
-    # Sparse output avoids writing unused slot space to the build volume.
-    for source, sector in ((bootfs, BOOT_START), (a.rootfs, ROOT_A), (a.rootfs, ROOT_B)):
+    # Sparse output avoids writing unused FAT space to the build volume.
+    for source, sector in ((bootfs, BOOT_START), (a.rootfs, ROOT_A)):
         subprocess.run(["dd", "if=" + str(source), "of=" + str(a.output), "bs=512",
                         "seek=" + str(sector), "conv=notrunc,sparse", "status=none"], check=True)
     bootfs.unlink()

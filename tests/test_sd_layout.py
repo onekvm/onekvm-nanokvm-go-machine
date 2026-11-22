@@ -63,22 +63,45 @@ class Layout(unittest.TestCase):
             with patch.object(sd.subprocess, "run", side_effect=run):
                 sd.boot_fat(root / "boot.fat", root, root, images)
         self.assertEqual(copied["::boot-slot"], b"A\n")
+        self.assertIn("::" + sd.INSTALL_MARKER, copied)
         self.assertEqual(mkfs[mkfs.index("-h") + 1], str(sd.BOOT_START))
         return copied
 
-    def test_fat_holds_both_capsule_slots_and_selects_a(self):
+    def test_fat_holds_capsule_slot_a_and_asks_to_install_b(self):
         copied = self.boot_fat({"architecture": "arm64"}, ("kernel.img", "dtb.img"))
         self.assertEqual(sorted(copied), sorted([
             "::boot.bin", "::atf.img", "::uboot.bin", "::kernel-a.img", "::dtb-a.img",
-            "::kernel-b.img", "::dtb-b.img", "::boot-slot"]))
-        self.assertEqual(copied["::kernel-b.img"], b"kernel.img")
+            "::boot-slot", "::onekvm/install-b"]))
+        self.assertEqual(copied["::kernel-a.img"], b"kernel.img")
 
-    def test_fat_holds_both_fit_slots_and_selects_a(self):
+    def test_fat_holds_fit_slot_a_and_asks_to_install_b(self):
         copied = self.boot_fat({"format": "fit", "architecture": "arm64"}, ("boot.itb",))
         self.assertEqual(sorted(copied), sorted([
-            "::boot.bin", "::atf.img", "::uboot.bin", "::boot-a.itb", "::boot-b.itb",
-            "::boot-slot"]))
-        self.assertEqual(copied["::boot-b.itb"], b"boot.itb")
+            "::boot.bin", "::atf.img", "::uboot.bin", "::boot-a.itb", "::boot-slot",
+            "::onekvm/install-b"]))
+        self.assertEqual(copied["::boot-a.itb"], b"boot.itb")
+
+    def test_image_ends_with_root_a_and_leaves_slot_b_unwritten(self):
+        def fat(path, firmware, boot, images):
+            with path.open("wb") as f:
+                f.truncate(sd.BOOT_SECTORS * 512)
+                f.write(b"FAT")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = self.root(temp, sd.SQUASHFS_MAGIC, 3 << 20)
+            output = Path(temp) / "sd.img"
+            argv = ["build-sd.py", "--firmware", temp, "--boot", temp, "--rootfs", str(root),
+                    "--output", str(output)]
+            with patch.object(sd, "check_inputs", return_value={"format": "fit"}), \
+                    patch.object(sd, "boot_fat", side_effect=fat), patch("sys.argv", argv):
+                sd.main()
+            image = output.read_bytes()
+            root_bytes = root.read_bytes()
+        self.assertEqual(len(image), sd.ROOT_A * 512 + (3 << 20))
+        self.assertLess(len(image), sd.ROOT_B * 512)
+        self.assertEqual(image[:512], sd.mbr())
+        self.assertEqual(image[sd.BOOT_START * 512:sd.BOOT_START * 512 + 3], b"FAT")
+        self.assertEqual(image[sd.ROOT_A * 512:], root_bytes)
 
     def test_inputs_must_match_their_manifests(self):
         with tempfile.TemporaryDirectory() as temp:
