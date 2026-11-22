@@ -54,7 +54,7 @@ class FirstBootInstall(unittest.TestCase):
     def run_init(self, temp, function):
         tools = Path(temp) / "tools"
         tools.mkdir(exist_ok=True)
-        for applet in ("hexdump", "dd", "wc", "cp", "mv", "rm", "sha256sum", "sync"):
+        for applet in ("hexdump", "dd", "stat", "cp", "mv", "rm", "sha256sum", "sync"):
             if not (tools / applet).exists():
                 os.symlink(shutil.which("busybox"), tools / applet)
         body = init_function(function)

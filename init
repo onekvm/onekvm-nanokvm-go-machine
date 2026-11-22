@@ -80,11 +80,12 @@ squashfs_bytes() {
 # file goes, so an interrupted install starts over at the next boot.
 root_file=/boot-config/onekvm/root.squashfs
 
-# The initramfs dd takes only if/of/bs/count/skip/seek and head has no -c.
+# The initramfs dd takes only if/of/bs/count/skip/seek and head has no -c;
+# its wc -c reads the whole file, stat does not.
 install_roots() {
     ab_layout || return 1
     # build-sd.py accepts only root images padded to 4 KiB, as mksquashfs pads them.
-    size=$(wc -c <"$root_file") && used=$(squashfs_bytes "$root_file") && [ "$used" -gt 0 ] &&
+    size=$(stat -c %s "$root_file") && used=$(squashfs_bytes "$root_file") && [ "$used" -gt 0 ] &&
         [ "$used" -le "$size" ] && [ "$((size % 4096))" -eq 0 ] && [ "$size" -le 134217728 ] || return 1
     echo 'OneKVM Go: installing the root system'
     for part in 2 3; do
