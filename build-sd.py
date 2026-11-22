@@ -10,9 +10,10 @@
   526336  p3 read-only root B, 128 MiB
   788480  p4 userdata, created by the initramfs on first boot up to the card end
 
-The image carries slot A only and ends with root A. Its FAT holds
-onekvm/install-b, so the first boot from slot A copies root A and the slot A
-boot image into slot B. Writing the image leaves p3 and p4 untouched.
+The image holds only the MBR and the used part of the FAT: the root image is
+the FAT's last file, onekvm/root.squashfs. The first boot from slot A writes
+it to p2 and p3 and copies the slot A boot image into slot B, as asked by
+onekvm/install-b. Writing the image leaves the rest of the card untouched.
 """
 import argparse
 import hashlib
@@ -30,6 +31,7 @@ ROOT_B = ROOT_A + SLOT_SECTORS
 USERDATA_START = ROOT_B + SLOT_SECTORS
 SQUASHFS_MAGIC = 0x73717368  # "hsqs" at offset 0
 FIRMWARE = ("boot.bin", "atf.img", "uboot.bin")
+ROOT_FILE = "onekvm/root.squashfs"
 INSTALL_MARKER = "onekvm/install-b"
 
 
@@ -65,6 +67,9 @@ def check_root(rootfs):
         raise ValueError("root image is not SquashFS")
     if not 0 < size <= SLOT_SECTORS * 512:
         raise ValueError("root image is %d bytes; a slot holds %d" % (size, SLOT_SECTORS * 512))
+    # The initramfs reads the slots back in 4 KiB blocks.
+    if size % 4096:
+        raise ValueError("root image is not padded to 4 KiB")
 
 
 def mbr():
@@ -81,7 +86,7 @@ def mbr():
     return bytes(table)
 
 
-def boot_fat(path, firmware, boot, images):
+def boot_fat(path, firmware, boot, images, rootfs):
     with path.open("wb") as f:
         f.truncate(BOOT_SECTORS * 512)
     # Hidden sectors = partition start, as on factory cards read by BootROM.
@@ -93,13 +98,30 @@ def boot_fat(path, firmware, boot, images):
     slot_file.write_text("A\n")
     files.append((slot_file, "boot-slot"))
     marker = path.with_suffix(".install")
-    marker.write_text("The first boot from slot A copies it into slot B.\n")
+    marker.write_text("The first boot from slot A copies the slot A boot images into slot B.\n")
     for source, name in files:
         subprocess.run(["mcopy", "-i", str(path), str(source), "::" + name], check=True)
     subprocess.run(["mmd", "-i", str(path), "::onekvm"], check=True)
     subprocess.run(["mcopy", "-i", str(path), str(marker), "::" + INSTALL_MARKER], check=True)
     slot_file.unlink()
     marker.unlink()
+    # Last, so that the image ends with it.
+    if subprocess.run(["mcopy", "-i", str(path), str(rootfs), "::" + ROOT_FILE]).returncode:
+        raise ValueError("the root image does not fit on the boot FAT next to the boot images")
+
+
+def fat_end(path):
+    """Length of the FAT32 image up to the end of its last allocated cluster."""
+    with path.open("rb") as f:
+        boot = f.read(512)
+        sector, cluster, reserved, fats = struct.unpack_from("<HBHB", boot, 11)
+        fat_sectors = struct.unpack_from("<I", boot, 36)[0]
+        f.seek(reserved * sector)
+        table = f.read(fat_sectors * sector)
+    entries = struct.unpack("<%dI" % (len(table) // 4), table)
+    last = max(n for n in range(2, len(entries)) if entries[n] & 0x0FFFFFFF)
+    # Cluster 2 is the first cluster of the data area.
+    return (reserved + fats * fat_sectors + (last - 1) * cluster) * sector
 
 
 def main():
@@ -110,14 +132,15 @@ def main():
     images = check_inputs(a.firmware, a.boot)
     check_root(a.rootfs)
     bootfs = a.output.with_suffix(".fat")
-    boot_fat(bootfs, a.firmware, a.boot, images)
+    boot_fat(bootfs, a.firmware, a.boot, images, a.rootfs)
+    end = fat_end(bootfs)
     with a.output.open("wb") as f:
-        f.truncate(ROOT_A * 512 + a.rootfs.stat().st_size)
+        f.truncate(BOOT_START * 512 + end)
         f.write(mbr())
-    # Sparse output avoids writing unused FAT space to the build volume.
-    for source, sector in ((bootfs, BOOT_START), (a.rootfs, ROOT_A)):
-        subprocess.run(["dd", "if=" + str(source), "of=" + str(a.output), "bs=512",
-                        "seek=" + str(sector), "conv=notrunc,sparse", "status=none"], check=True)
+    # Free FAT space after the last cluster stays as it is on the card.
+    subprocess.run(["dd", "if=" + str(bootfs), "of=" + str(a.output), "bs=512", "seek=" + str(BOOT_START),
+                    "count=" + str(end), "iflag=count_bytes", "conv=notrunc,sparse", "status=none"],
+                   check=True)
     bootfs.unlink()
 
 

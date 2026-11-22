@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import struct
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -45,47 +46,90 @@ class Layout(unittest.TestCase):
                 sd.check_root(self.root(temp, 0xE0F5E1E2, 4096, offset=1024))
             with self.assertRaises(ValueError):
                 sd.check_root(self.root(temp, sd.SQUASHFS_MAGIC, (128 << 20) + 512))
+            with self.assertRaises(ValueError):
+                sd.check_root(self.root(temp, sd.SQUASHFS_MAGIC, (64 << 20) + 512))
 
     def boot_fat(self, images, names):
-        copied = {}
+        copied = []
         mkfs = []
 
-        def run(command, check):
+        def run(command, check=False):
             if command[0] == "mcopy":
-                copied[command[-1]] = Path(command[-2]).read_bytes()
+                copied.append((command[-1], Path(command[-2]).read_bytes()))
             elif command[0] == "mkfs.vfat":
                 mkfs.extend(command)
+            return subprocess.CompletedProcess(command, 0)
 
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in (*sd.FIRMWARE, *names):
+            for name in (*sd.FIRMWARE, *names, "root"):
                 (root / name).write_bytes(name.encode())
             with patch.object(sd.subprocess, "run", side_effect=run):
-                sd.boot_fat(root / "boot.fat", root, root, images)
-        self.assertEqual(copied["::boot-slot"], b"A\n")
-        self.assertIn("::" + sd.INSTALL_MARKER, copied)
+                sd.boot_fat(root / "boot.fat", root, root, images, root / "root")
+        files = dict(copied)
+        self.assertEqual(files["::boot-slot"], b"A\n")
+        self.assertIn("::" + sd.INSTALL_MARKER, files)
+        # The image ends with the root file.
+        self.assertEqual(copied[-1], ("::onekvm/root.squashfs", b"root"))
         self.assertEqual(mkfs[mkfs.index("-h") + 1], str(sd.BOOT_START))
-        return copied
+        return files
 
-    def test_fat_holds_capsule_slot_a_and_asks_to_install_b(self):
+    def test_fat_holds_capsule_slot_a_root_and_asks_to_install(self):
         copied = self.boot_fat({"architecture": "arm64"}, ("kernel.img", "dtb.img"))
         self.assertEqual(sorted(copied), sorted([
             "::boot.bin", "::atf.img", "::uboot.bin", "::kernel-a.img", "::dtb-a.img",
-            "::boot-slot", "::onekvm/install-b"]))
+            "::boot-slot", "::onekvm/install-b", "::onekvm/root.squashfs"]))
         self.assertEqual(copied["::kernel-a.img"], b"kernel.img")
 
-    def test_fat_holds_fit_slot_a_and_asks_to_install_b(self):
+    def test_fat_holds_fit_slot_a_root_and_asks_to_install(self):
         copied = self.boot_fat({"format": "fit", "architecture": "arm64"}, ("boot.itb",))
         self.assertEqual(sorted(copied), sorted([
             "::boot.bin", "::atf.img", "::uboot.bin", "::boot-a.itb", "::boot-slot",
-            "::onekvm/install-b"]))
+            "::onekvm/install-b", "::onekvm/root.squashfs"]))
         self.assertEqual(copied["::boot-a.itb"], b"boot.itb")
 
-    def test_image_ends_with_root_a_and_leaves_slot_b_unwritten(self):
-        def fat(path, firmware, boot, images):
-            with path.open("wb") as f:
-                f.truncate(sd.BOOT_SECTORS * 512)
-                f.write(b"FAT")
+    def test_a_root_that_does_not_fit_on_the_fat_is_rejected(self):
+        def run(command, check=False):
+            full = command[0] == "mcopy" and command[-1] == "::" + sd.ROOT_FILE
+            return subprocess.CompletedProcess(command, 1 if full else 0)
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in (*sd.FIRMWARE, "boot.itb", "root"):
+                (root / name).write_bytes(name.encode())
+            with patch.object(sd.subprocess, "run", side_effect=run), self.assertRaises(ValueError):
+                sd.boot_fat(root / "boot.fat", root, root, {"format": "fit"}, root / "root")
+
+    def fat32(self, path, last_cluster):
+        """A FAT32 image: 512-byte sectors, 2-sector clusters, 32 reserved sectors, two 8-sector FATs."""
+        boot = bytearray(512)
+        struct.pack_into("<HBHB", boot, 11, 512, 2, 32, 2)
+        struct.pack_into("<I", boot, 36, 8)
+        table = bytearray(8 * 512)
+        struct.pack_into("<III", table, 0, 0x0FFFFFF8, 0x0FFFFFFF, 0x0FFFFFFF)
+        # A chain ending in last_cluster, with a free cluster before it.
+        struct.pack_into("<I", table, 4 * (last_cluster - 2), last_cluster)
+        struct.pack_into("<I", table, 4 * last_cluster, 0x0FFFFFFF)
+        with path.open("wb") as f:
+            f.truncate(1 << 20)
+            f.write(boot)
+            f.seek(32 * 512)
+            f.write(table)
+
+    def test_fat_end_is_the_end_of_the_last_allocated_cluster(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "boot.fat"
+            self.fat32(path, 100)
+            # Data area at sector 32 + 2 * 8; clusters 2..100 take 99 * 2 sectors.
+            self.assertEqual(sd.fat_end(path), (48 + 99 * 2) * 512)
+
+    def test_image_holds_the_mbr_and_the_used_fat_only(self):
+        def fat(path, firmware, boot, images, rootfs):
+            self.fat32(path, 300)
+            with path.open("r+b") as f:
+                f.seek(sd.fat_end(path) - 3)
+                f.write(b"END")
+                f.write(b"free space")
 
         with tempfile.TemporaryDirectory() as temp:
             root = self.root(temp, sd.SQUASHFS_MAGIC, 3 << 20)
@@ -96,12 +140,10 @@ class Layout(unittest.TestCase):
                     patch.object(sd, "boot_fat", side_effect=fat), patch("sys.argv", argv):
                 sd.main()
             image = output.read_bytes()
-            root_bytes = root.read_bytes()
-        self.assertEqual(len(image), sd.ROOT_A * 512 + (3 << 20))
-        self.assertLess(len(image), sd.ROOT_B * 512)
+        self.assertEqual(len(image), sd.BOOT_START * 512 + (48 + 299 * 2) * 512)
         self.assertEqual(image[:512], sd.mbr())
-        self.assertEqual(image[sd.BOOT_START * 512:sd.BOOT_START * 512 + 3], b"FAT")
-        self.assertEqual(image[sd.ROOT_A * 512:], root_bytes)
+        self.assertEqual(image[sd.BOOT_START * 512 + 11:sd.BOOT_START * 512 + 13], struct.pack("<H", 512))
+        self.assertTrue(image.endswith(b"END"))
 
     def test_inputs_must_match_their_manifests(self):
         with tempfile.TemporaryDirectory() as temp:

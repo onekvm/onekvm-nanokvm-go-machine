@@ -73,18 +73,37 @@ squashfs_bytes() {
         hexdump -s 40 -n 4 -e '1/4 "%u"' "$1" 2>/dev/null
 }
 
-# A card written from the SD image holds root A and slot A's boot files only;
-# onekvm/install-b asks the first boot from slot A to copy both into slot B.
-# Every copy is read back from the card and the marker goes last, so an
-# interrupted install starts over at the next boot. On failure slot A still
-# boots, without a fallback slot until a later boot or update fills slot B.
-install_slot_b() {
+# A card written from the SD image holds slot A's boot images, and the root
+# image as a file on the FAT. The first boot from slot A writes that file to
+# both root slots, then copies slot A's boot images into slot B as
+# onekvm/install-b asks. Every copy is read back from the card before its
+# file goes, so an interrupted install starts over at the next boot.
+root_file=/boot-config/onekvm/root.squashfs
+
+# The initramfs dd takes only if/of/bs/count/skip/seek and head has no -c.
+install_roots() {
     ab_layout || return 1
-    used=$(squashfs_bytes /dev/mmcblk1p2) && [ "$used" -gt 0 ] || return 1
-    blocks=$(((used + 1048575) / 1048576))
-    [ "$blocks" -le 128 ] || return 1
-    echo 'OneKVM Go: installing slot B from slot A'
-    dd if=/dev/mmcblk1p2 of=/dev/mmcblk1p3 bs=1048576 count="$blocks" 2>/dev/null || return 1
+    # build-sd.py accepts only root images padded to 4 KiB, as mksquashfs pads them.
+    size=$(wc -c <"$root_file") && used=$(squashfs_bytes "$root_file") && [ "$used" -gt 0 ] &&
+        [ "$used" -le "$size" ] && [ "$((size % 4096))" -eq 0 ] && [ "$size" -le 134217728 ] || return 1
+    echo 'OneKVM Go: installing the root system'
+    for part in 2 3; do
+        dd if="$root_file" of=/dev/mmcblk1p$part bs=1048576 2>/dev/null || return 1
+    done
+    sync
+    # Read the copies back from the card, not from the page cache.
+    echo 3 >/proc/sys/vm/drop_caches
+    image=$(sha256sum <"$root_file")
+    for part in 2 3; do
+        [ "$(dd if=/dev/mmcblk1p$part bs=4096 count=$((size / 4096)) 2>/dev/null | sha256sum)" = "$image" ] ||
+            return 1
+    done
+    mount -o remount,rw /boot-config && rm -f "$root_file" && sync
+}
+
+# Without slot B's boot images slot A still boots, with no slot to fall back to.
+install_slot_b() {
+    echo 'OneKVM Go: installing slot B boot images'
     mount -o remount,rw /boot-config || return 1
     # The FIT, or the kernel and DTB capsules for the vendor U-Boot.
     for name in boot.itb kernel.img dtb.img; do
@@ -93,10 +112,7 @@ install_slot_b() {
         cp "$a_file" "/boot-config/.${name%.*}-b.${name##*.}.new" || return 1
     done
     sync
-    # Read the copies back from the card, not from the page cache.
     echo 3 >/proc/sys/vm/drop_caches
-    [ "$(dd if=/dev/mmcblk1p2 bs=1048576 count="$blocks" 2>/dev/null | sha256sum)" = \
-        "$(dd if=/dev/mmcblk1p3 bs=1048576 count="$blocks" 2>/dev/null | sha256sum)" ] || return 1
     for name in boot.itb kernel.img dtb.img; do
         a_file=/boot-config/${name%.*}-a.${name##*.}
         [ -e "$a_file" ] || continue
@@ -109,13 +125,16 @@ install_slot_b() {
     rm -f /boot-config/onekvm/install-b && sync
 }
 
-# The installing screen replaces the boot bar while slot B is written.
+# The installing screen replaces the boot bar while the slots are written.
 first_boot_install() {
     if [ -n "$splash" ]; then
         onekvm-boot-splash finish || :
         onekvm-boot-splash install 5 || :
     fi
-    install_slot_b || echo 'OneKVM Go: slot B install failed; retrying at the next boot'
+    # Root A is not usable until its copy reads back.
+    [ ! -e "$root_file" ] || install_roots || fail 'cannot install the root system'
+    [ ! -e /boot-config/onekvm/install-b ] || install_slot_b ||
+        echo 'OneKVM Go: slot B install failed; retrying at the next boot'
     mount -o remount,ro /boot-config || fail 'cannot release SD boot configuration'
     if [ -n "$splash" ]; then
         onekvm-boot-splash --progress initramfs boot || :
@@ -294,7 +313,8 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     # It needs no files from the former initramfs once connected.
 else
     if [ -n "$slot" ]; then
-        [ "$slot" != A ] || [ ! -e /boot-config/onekvm/install-b ] || first_boot_install
+        [ "$slot" != A ] || { [ ! -e "$root_file" ] && [ ! -e /boot-config/onekvm/install-b ]; } ||
+            first_boot_install
         # U-Boot read boot-slot; persistence and RAUC read rauc.slot.
         mount_ab_root "$slot"
     else

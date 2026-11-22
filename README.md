@@ -28,7 +28,7 @@ Used by the `onekvm-distro` firmware, boot image and SD image recipes. None of t
 | `package-firmware.py` | ROM `boot.bin` (signed SPL, two copies), `atf.img` (BL31) and `uboot.bin` |
 | `package-fit.py` | `boot.itb` for the mainline U-Boot: one FIT with the AArch64 Image (with initramfs, gzip) and the Go DTB, each with a SHA-256 hash, and the image's build ID in its configuration; rejects the same images as `package-boot.py`, a DTB that is not for the Go, and a FIT larger than the U-Boot load window |
 | `package-boot.py` | Axera `kernel.img` (AArch64 Image with initramfs) and `dtb.img` for the vendor U-Boot; rejects images that would overlap BL31 or the DTB |
-| `build-sd.py` | A/B SD image from either boot format; checks the firmware and boot files against their manifests and the root image against the slot size |
+| `build-sd.py` | A/B SD image from either boot format; checks the firmware and boot files against their manifests and the root image against the slot size and the free FAT space |
 
 ## SD card layout
 
@@ -37,8 +37,8 @@ Same slot sizes as NanoKVM Pro SD, 512-byte sectors:
 | Partition | Start sector | Content |
 | --- | ---: | --- |
 | MBR | 0 | Partition table only. BootROM and SPL load `boot.bin` and the files after it from the first FAT partition |
-| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, the boot images of both slots, `boot-slot`, and the `onekvm/` settings folder. The SD image carries slot A's boot images only |
-| p2, 128 MiB | 264192 | Read-only root A, SquashFS |
+| p1, FAT32, 128 MiB, active, label `ONEKVMBOOT` | 2048 | `boot.bin`, `uboot.bin`, `atf.img`, the boot images of both slots, `boot-slot`, and the `onekvm/` settings folder. The SD image carries slot A's boot images and the root image to install |
+| p2, 128 MiB | 264192 | Read-only root A, SquashFS. The SD image does not cover it; see below |
 | p3, 128 MiB | 526336 | Read-only root B, SquashFS. The SD image does not cover it; see below |
 | p4, userdata | 788480 | Created on the first SD boot up to the end of the card and formatted f2fs. Existing f2fs or ext4 userdata is kept |
 
@@ -61,12 +61,16 @@ the new image ships, as on NanoKVM Pro, so they cannot hide the image's versions
 If userdata cannot be mounted, Go still boots, and changes last until the
 next reboot.
 
-The SD image ends with root A, so writing it leaves p3 and userdata untouched.
-Its FAT holds `onekvm/install-b`: the first boot from slot A shows the
-installing screen, copies root A to p3 and slot A's boot images to slot B, reads
-both copies back from the card and then deletes the file. An interrupted or
-failed install runs again at the next boot; until it completes slot A boots
-without a fallback slot. An update written to slot B deletes the file too.
+The SD image holds only the partition table and the used part of the FAT, so
+writing it leaves both root slots and userdata untouched. The root image is
+the FAT file `onekvm/root.squashfs`. The first boot from slot A shows the
+installing screen, writes that file to p2 and p3, reads both back from the card
+and deletes the file; slot A does not boot until this succeeds. It then copies
+slot A's boot images to slot B as `onekvm/install-b` asks, reads them back and
+deletes that file; if this fails, slot A boots without a fallback slot. An
+interrupted install runs again at the next boot. An update written to slot B
+deletes `onekvm/install-b` too. The root image must fit on the FAT next to the
+boot images, about 110 MiB.
 
 A card without `boot-slot` keeps the earlier layout: `boot.itb` (mainline
 U-Boot) or `kernel.img` and `dtb.img` (vendor U-Boot) on FAT, and an ext4 root in p2 that

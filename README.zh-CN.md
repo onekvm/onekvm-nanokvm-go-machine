@@ -27,7 +27,7 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | `package-firmware.py` | ROM 读取的 `boot.bin`（签名 SPL，两份）、`atf.img`（BL31）和 `uboot.bin` |
 | `package-fit.py` | 主线 U-Boot 用的 `boot.itb`：一个 FIT，含 AArch64 Image（含 initramfs，gzip 压缩）和 Go DTB，各带 SHA-256 哈希，配置里记有镜像的 build ID；拒绝 `package-boot.py` 会拒绝的镜像、不是 Go 的 DTB 和超出 U-Boot 载入区的 FIT |
 | `package-boot.py` | 厂商 U-Boot 用的 Axera 格式 `kernel.img`（含 initramfs 的 AArch64 Image）和 `dtb.img`；会与 BL31 或 DTB 重叠的镜像直接拒绝 |
-| `build-sd.py` | 由任一种启动格式生成 A/B SD 镜像；按 manifest 核对固件和启动文件，并检查根镜像不超过槽容量 |
+| `build-sd.py` | 由任一种启动格式生成 A/B SD 镜像；按 manifest 核对固件和启动文件，并检查根镜像不超过槽容量和 FAT 剩余空间 |
 
 ## SD 卡布局
 
@@ -36,8 +36,8 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 | 分区 | 起始扇区 | 内容 |
 | --- | ---: | --- |
 | MBR | 0 | 只有分区表。BootROM 和 SPL 从第一个 FAT 分区读取 `boot.bin` 及后续文件 |
-| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、两个槽的启动镜像、`boot-slot` 和 `onekvm/` 设置目录。SD 镜像只带槽 A 的启动镜像 |
-| p2，128 MiB | 264192 | 只读根分区 A，SquashFS |
+| p1，FAT32，128 MiB，活动分区，卷标 `ONEKVMBOOT` | 2048 | `boot.bin`、`uboot.bin`、`atf.img`、两个槽的启动镜像、`boot-slot` 和 `onekvm/` 设置目录。SD 镜像只带槽 A 的启动镜像和待安装的根镜像 |
+| p2，128 MiB | 264192 | 只读根分区 A，SquashFS；SD 镜像不包含此分区，见下文 |
 | p3，128 MiB | 526336 | 只读根分区 B，SquashFS；SD 镜像不包含此分区，见下文 |
 | p4，userdata | 788480 | 首次从 SD 启动时建到卡尾并格式化为 f2fs；已有的 f2fs 或 ext4 userdata 保留 |
 
@@ -55,9 +55,10 @@ Sipeed NanoKVM Go（AX620Q，ARM64）的机型文件，由 `onekvm-distro` 的
 目录。挂载前 initramfs 会删除 upper 中属于新镜像的文件副本（同 NanoKVM Pro），避免旧副本
 遮住镜像里的新版本。userdata 无法挂载时 Go 仍能启动，改动只保留到下次重启。
 
-SD 镜像止于根分区 A，写入时不碰 p3 和 userdata。镜像的 FAT 里有 `onekvm/install-b`：从槽 A 首次启动时显示安装界面，
-把根分区 A 复制到 p3、把槽 A 的启动镜像复制为槽 B 的，从卡上回读校验两份副本后删除该文件。安装中断或失败时下次启动重做；
-完成前槽 A 启动时没有可回退的槽。更新写入槽 B 时也会删除该文件。
+SD 镜像只有分区表和 FAT 的已用部分，写入时不碰两个根分区和 userdata。根镜像是 FAT 上的文件 `onekvm/root.squashfs`：
+从槽 A 首次启动时显示安装界面，把它写入 p2 和 p3，从卡上回读校验后删除该文件；成功前槽 A 不会启动。随后按
+`onekvm/install-b` 把槽 A 的启动镜像复制为槽 B 的，回读校验后删除该文件；这一步失败时槽 A 照常启动，但没有可回退的槽。
+安装中断时下次启动重做。更新写入槽 B 时也会删除 `onekvm/install-b`。根镜像须能和启动镜像一起放进 FAT，约 110 MiB 以内。
 
 没有 `boot-slot` 的卡
 沿用旧布局：FAT 上是 `boot.itb`（主线 U-Boot）或 `kernel.img`、`dtb.img`（厂商 U-Boot），p2 是 ext4
