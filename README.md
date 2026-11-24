@@ -3,7 +3,7 @@
 English | [简体中文](README.zh-CN.md)
 
 Machine files for the Sipeed NanoKVM Go (AX620Q, ARM64), built by `onekvm-distro`
-(`meta-onekvm-nanokvm-go`).
+(`meta-sipeed/meta-nanokvm-go`).
 
 Status: bring-up. The AArch64 SPL/BL31/U-Boot cold-boots one Go from an SD card
 with the factory-formatted FAT; the firmware manifest still says
