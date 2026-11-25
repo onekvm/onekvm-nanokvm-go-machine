@@ -118,6 +118,8 @@ watchdog reset.
 | `1080p60.edid.bin` | 1920×1080 @ 60 Hz, from `onekvm-distro` |
 | `720p60.edid.bin` | 1280×720 @ 60 Hz |
 
+`720p60.edid.bin` has its own PnP product ID, the same bytes as the Pro preset.
+
 ## Tests
 
 `make test` checks the boot inputs (`package-fit.py`, `package-boot.py`), the SD layout, the boot splash rendering, the boot bar and its hand-off from the initramfs to the root system.

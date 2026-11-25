@@ -102,6 +102,8 @@ OneKVM 的重启同样通过 5 秒硬件 watchdog 复位完成。
 | `1080p60.edid.bin` | 1920×1080 @ 60 Hz，来自 `onekvm-distro` |
 | `720p60.edid.bin` | 1280×720 @ 60 Hz |
 
+`720p60.edid.bin` 使用独立的 PnP 产品号，与 Pro 的同名预设内容相同。
+
 ## 测试
 
 `make test` 检查启动输入（`package-fit.py`、`package-boot.py`）、SD 布局、启动 logo 绘制、启动进度条及其从 initramfs 到根系统的交接。
