@@ -114,8 +114,8 @@ watchdog reset.
 
 | Preset | Mode |
 | --- | --- |
-| `factory.edid.bin` | Default, identical to `1080p60.edid.bin` |
-| `1080p60.edid.bin` | 1920×1080 @ 60 Hz |
+| `factory.edid.bin` | Default 1920×1080 @ 60 Hz, installed by Core and shared by every machine |
+| `1080p60.edid.bin` | 1920×1080 @ 60 Hz, installed by Core |
 | `720p60.edid.bin` | 1280×720 @ 60 Hz |
 
 ## Tests

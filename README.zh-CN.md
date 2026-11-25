@@ -98,8 +98,8 @@ OneKVM 的重启同样通过 5 秒硬件 watchdog 复位完成。
 
 | 预设 | 模式 |
 | --- | --- |
-| `factory.edid.bin` | 默认，与 `1080p60.edid.bin` 相同 |
-| `1080p60.edid.bin` | 1920×1080 @ 60 Hz |
+| `factory.edid.bin` | 默认 1920×1080 @ 60 Hz，由 Core 安装，所有机型共用 |
+| `1080p60.edid.bin` | 1920×1080 @ 60 Hz，由 Core 安装 |
 | `720p60.edid.bin` | 1280×720 @ 60 Hz |
 
 ## 测试
