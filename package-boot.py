@@ -42,6 +42,24 @@ def package(sdk, source, output, raw_limit, compressed_limit, compress=True):
             "uncompressed_size": len(raw), "source_sha256": hashlib.sha256(raw).hexdigest()}
 
 
+def check_kernel(kernel, arch="arm64"):
+    """Raise unless `kernel` is a raw Image that stays clear of BL31 and the DTB."""
+    if len(kernel) >= 40 and struct.unpack_from("<I", kernel, 36)[0] == 0x016f2818:
+        raise ValueError("Go sd_boot needs raw ARM Image, not zImage")
+    if arch == "arm64":
+        if len(kernel) < 64 or kernel[56:60] != b"ARM\x64":
+            raise ValueError("Go ARM64 requires an AArch64 Image header")
+        offset, size, flags = struct.unpack_from("<3Q", kernel, 8)
+        if (not flags & 8 or offset > 0x40200000 or (0x40200000 - offset) % (2 * 1024 * 1024)
+                or size < len(kernel) or size > 46 * 1024 * 1024):
+            raise ValueError("AArch64 Image would overlap BL31/DTB after booti")
+
+
+def check_dtb(dtb):
+    if dtb[:4] != bytes.fromhex("d00dfeed"):
+        raise ValueError("invalid DTB")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("sdk", "kernel", "dtb", "out"):
@@ -49,18 +67,8 @@ def main():
     p.add_argument("--arch", choices=("arm32", "arm64"), default="arm64")
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    kernel = a.kernel.read_bytes()
-    if len(kernel) >= 40 and struct.unpack_from("<I", kernel, 36)[0] == 0x016f2818:
-        raise ValueError("Go sd_boot needs raw ARM Image, not zImage")
-    if a.arch == "arm64":
-        if len(kernel) < 64 or kernel[56:60] != b"ARM\x64":
-            raise ValueError("Go ARM64 requires an AArch64 Image header")
-        offset, size, flags = struct.unpack_from("<3Q", kernel, 8)
-        if (not flags & 8 or offset > 0x40200000 or (0x40200000 - offset) % (2 * 1024 * 1024)
-                or size < len(kernel) or size > 46 * 1024 * 1024):
-            raise ValueError("AArch64 Image would overlap BL31/DTB after booti")
-    if a.dtb.read_bytes()[:4] != bytes.fromhex("d00dfeed"):
-        raise ValueError("invalid DTB")
+    check_kernel(a.kernel.read_bytes(), a.arch)
+    check_dtb(a.dtb.read_bytes())
     # ARM64 Image: 0x40200000..0x43000000, DTB: 0x43000000..0x43100000.
     # Capsule limits include their 1 KiB headers. Keep 64 KiB for FDT fixups.
     mib = 1024 * 1024

@@ -18,21 +18,218 @@ fail() {
     while :; do sleep 10; done
 }
 
-/usr/libexec/onekvm/onekvm-go-watchdog --boot &
-watchdog_pid=$!
-attempt=0
-until [ -s /run/onekvm/boot-watchdog.pid ]; do
-    kill -0 "$watchdog_pid" 2>/dev/null || {
-        echo 'OneKVM Go: watchdog could not be armed; refusing unattended boot'
-        while :; do sleep 10; done
-    }
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 10 ] || fail 'watchdog startup timed out'
-    sleep 1
-done
+# The initramfs BusyBox od has no -A/-t/-j/-N; hexdump has -s/-n/-e.
+bytes_hex() {
+    hexdump -v -s "$2" -n "$3" -e '1/1 "%02x"' "$1" 2>/dev/null
+}
+
+part_is() {
+    [ "$(cat "/sys/class/block/mmcblk1p$1/start" 2>/dev/null)" = "$2" ] &&
+        [ "$(cat "/sys/class/block/mmcblk1p$1/size" 2>/dev/null)" = "$3" ]
+}
+
+# Only the A/B layout written by build-sd.py: disk ID and exact slot geometry.
+ab_layout() {
+    [ "$(bytes_hex /dev/mmcblk1 440 4)" = 47564b4f ] &&
+        part_is 1 2048 262144 && part_is 2 264192 262144 && part_is 3 526336 262144 &&
+        { [ ! -e /sys/class/block/mmcblk1p4 ] ||
+            [ "$(cat /sys/class/block/mmcblk1p4/start)" = 788480 ]; }
+}
+
+# p4 runs from 788480 to the card end. sfdisk changes only the partition
+# table in sector 0; its boot code area and sectors 1-2047 stay as written.
+create_userdata() {
+    disk=$(cat /sys/class/block/mmcblk1/size)
+    # At least 256 MiB of userdata.
+    [ "$((disk - 788480))" -ge 524288 ] || return 1
+    echo 'OneKVM Go: creating userdata partition'
+    # Never wipe signatures: a rewritten card keeps userdata at the same offset.
+    printf 'start=788480, type=83\n' |
+        sfdisk --no-reread --no-tell-kernel --wipe never --wipe-partitions never -q -N 4 /dev/mmcblk1 &&
+        partx --add --nr 4 /dev/mmcblk1 || return 1
+    attempt=0
+    until [ -b /dev/mmcblk1p4 ]; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 10 ] || return 1
+        sleep 1
+    done
+}
+
+# Keep existing f2fs or ext4 userdata. Format only a partition carrying
+# neither superblock, such as one created above.
+mount_userdata() {
+    mount -t f2fs -o noatime /dev/mmcblk1p4 /userdata 2>/dev/null && return
+    mount -t ext4 -o noatime /dev/mmcblk1p4 /userdata 2>/dev/null && return
+    [ "$(bytes_hex /dev/mmcblk1p4 1024 4)" != 1020f5f2 ] &&
+        [ "$(bytes_hex /dev/mmcblk1p4 1080 2)" != 53ef ] || return 1
+    echo 'OneKVM Go: formatting userdata (f2fs)'
+    mkfs.f2fs -q -f -l userdata /dev/mmcblk1p4 &&
+        mount -t f2fs -o noatime /dev/mmcblk1p4 /userdata
+}
+
+# SquashFS bytes_used: le64 at offset 40; Go roots stay far below 4 GiB.
+squashfs_bytes() {
+    [ "$(bytes_hex "$1" 0 4)" = 68737173 ] && [ "$(bytes_hex "$1" 44 4)" = 00000000 ] &&
+        hexdump -s 40 -n 4 -e '1/4 "%u"' "$1" 2>/dev/null
+}
+
+# A card written from the SD image holds slot A's boot images, and the root
+# image as a file on the FAT. The first boot from slot A writes that file to
+# both root slots, then copies slot A's boot images into slot B as
+# onekvm/install-b asks. Every copy is read back from the card before its
+# file goes, so an interrupted install starts over at the next boot.
+root_file=/boot-config/onekvm/root.squashfs
+
+# The initramfs dd takes only if/of/bs/count/skip/seek and head has no -c;
+# its wc -c reads the whole file, stat does not.
+install_roots() {
+    ab_layout || return 1
+    # build-sd.py accepts only root images padded to 4 KiB, as mksquashfs pads them.
+    size=$(stat -c %s "$root_file") && used=$(squashfs_bytes "$root_file") && [ "$used" -gt 0 ] &&
+        [ "$used" -le "$size" ] && [ "$((size % 4096))" -eq 0 ] && [ "$size" -le 134217728 ] || return 1
+    echo 'OneKVM Go: installing the root system'
+    for part in 2 3; do
+        dd if="$root_file" of=/dev/mmcblk1p$part bs=1048576 2>/dev/null || return 1
+    done
+    sync
+    # Read the copies back from the card, not from the page cache.
+    echo 3 >/proc/sys/vm/drop_caches
+    image=$(sha256sum <"$root_file")
+    for part in 2 3; do
+        [ "$(dd if=/dev/mmcblk1p$part bs=4096 count=$((size / 4096)) 2>/dev/null | sha256sum)" = "$image" ] ||
+            return 1
+    done
+    mount -o remount,rw /boot-config && rm -f "$root_file" && sync
+}
+
+# Without slot B's boot images slot A still boots, with no slot to fall back to.
+install_slot_b() {
+    echo 'OneKVM Go: installing slot B boot images'
+    mount -o remount,rw /boot-config || return 1
+    # The FIT, or the kernel and DTB capsules for the vendor U-Boot.
+    for name in boot.itb kernel.img dtb.img; do
+        a_file=/boot-config/${name%.*}-a.${name##*.}
+        [ -e "$a_file" ] || continue
+        cp "$a_file" "/boot-config/.${name%.*}-b.${name##*.}.new" || return 1
+    done
+    sync
+    echo 3 >/proc/sys/vm/drop_caches
+    for name in boot.itb kernel.img dtb.img; do
+        a_file=/boot-config/${name%.*}-a.${name##*.}
+        [ -e "$a_file" ] || continue
+        b_new=/boot-config/.${name%.*}-b.${name##*.}.new
+        [ "$(sha256sum <"$a_file")" = "$(sha256sum <"$b_new")" ] || return 1
+        # FAT has no atomic replace: the complete copy is renamed into place.
+        mv -f "$b_new" "/boot-config/${name%.*}-b.${name##*.}" || return 1
+    done
+    sync
+    rm -f /boot-config/onekvm/install-b && sync
+}
+
+# The installing screen replaces the boot bar while the slots are written.
+first_boot_install() {
+    if [ -n "$splash" ]; then
+        onekvm-boot-splash finish || :
+        onekvm-boot-splash install 5 || :
+    fi
+    # Root A is not usable until its copy reads back.
+    [ ! -e "$root_file" ] || install_roots || fail 'cannot install the root system'
+    [ ! -e /boot-config/onekvm/install-b ] || install_slot_b ||
+        echo 'OneKVM Go: slot B install failed; retrying at the next boot'
+    mount -o remount,ro /boot-config || fail 'cannot release SD boot configuration'
+    if [ -n "$splash" ]; then
+        onekvm-boot-splash --progress initramfs boot || :
+        onekvm-boot-splash animate </dev/null >/dev/null 2>&1 &
+    fi
+}
+
+mount_ab_root() {
+    ab_layout || fail 'SD card is not the OneKVM Go A/B layout'
+    root=/dev/mmcblk1p2
+    [ "$1" = B ] && root=/dev/mmcblk1p3
+    mkdir -p /rofs /userdata
+    mount -t squashfs -o ro "$root" /rofs || fail "slot $1 root mount failed"
+    if ! { [ -b /dev/mmcblk1p4 ] || create_userdata; } || ! mount_userdata; then
+        # Settings are not kept, but the device stays reachable and the
+        # userdata partition is left untouched for repair.
+        echo 'OneKVM Go: userdata unavailable; changes last until reboot'
+        mount -t tmpfs -o mode=0755 tmpfs /userdata || fail 'cannot mount temporary userdata'
+        touch /run/onekvm/userdata-unavailable
+    fi
+    mkdir -p /userdata/upper /userdata/work /userdata/storage ||
+        fail 'cannot prepare userdata'
+    # As on NanoKVM Pro, retire image-owned upper files and record this image
+    # and kernel in the upper, so persistence skips its per-file refresh.
+    /usr/lib/onekvm/initramfs-kernel-overlay /rofs /userdata /userdata/upper "$1" ||
+        echo 'OneKVM Go: image overlay refresh failed; persistence compares files instead'
+    # A/B share upper/work; /data lives in the upper as on NanoKVM Pro.
+    mount -t overlay overlay \
+        -o lowerdir=/rofs,upperdir=/userdata/upper,workdir=/userdata/work /newroot ||
+        fail 'root overlay mount failed'
+    # The slot root stays hidden at /mnt/.rofs, as overlayroot places it.
+    mkdir -p /newroot/mnt/.rofs /newroot/media/userdata /newroot/mnt/storage
+    mount --bind /userdata/storage /newroot/mnt/storage &&
+        mount --move /userdata /newroot/media/userdata &&
+        mount --move /rofs /newroot/mnt/.rofs || fail 'cannot move slot mounts'
+}
+
+# The shared Recovery hook is an initramfs-framework module: it expects the
+# framework's console messages and fatal().
+msg() { echo "$@" >/dev/console; }
+info() { echo "$@" >/dev/console; }
+fatal() { echo "$@" >/dev/console; exit 1; }
+
+# Called by the hook once Recovery is chosen. Writing a card can outlast the
+# boot grace, so the feeder keeps the watchdog fed without it.
+go_recovery_enter() {
+    kill -USR1 "$watchdog_pid" || echo 'OneKVM Go: watchdog feeder missing; hardware reset pending'
+    [ -n "$splash" ] || return 0
+    onekvm-boot-splash finish || :
+    onekvm-boot-splash --message 'Recovery: the USB port shows the whole SD card as a drive. Write the OneKVM Go image to it, then restart.' recovery || :
+}
+
+# Explicit requests, the boot counter (when $1 is 1) and factory reset run
+# before any SD partition is mounted. A hook failure ends only its subshell,
+# so normal boot continues. In Recovery the subshell never returns; the
+# traps let BusyBox reboot/poweroff, which signal PID 1, act from its console.
+recovery_check() {
+    [ -r /init.d/20-recovery ] || return 0
+    trap 'sync; reboot -f' TERM
+    trap 'sync; poweroff -f' USR2
+    trap 'sync; halt -f' USR1
+    (
+        bootparam_onekvm_recovery=
+        for argument in $(cat /proc/cmdline); do
+            case "$argument" in
+                onekvm_recovery=*|onekvm.recovery=*) bootparam_onekvm_recovery=${argument#*=} ;;
+            esac
+        done
+        . /init.d/20-recovery
+        recovery_board_enter() { go_recovery_enter; }
+        # Without Ethernet there is no Recovery web page.
+        ONEKVM_RECOVERY_WEB=0
+        ONEKVM_RECOVERY_COUNT_BOOTS=$1
+        recovery_run
+    ) </dev/console &
+    wait $! || echo 'OneKVM Go: Recovery check failed; continuing normal boot'
+    trap - TERM USR1 USR2
+}
+
+# Returns once the timer is armed and the feeder's PID is published.
+/usr/libexec/onekvm/onekvm-go-watchdog --boot &&
+    read -r watchdog_pid </run/onekvm/boot-watchdog.pid || {
+    echo 'OneKVM Go: watchdog could not be armed; refusing unattended boot'
+    while :; do sleep 10; done
+}
 
 # The logo stays until the screen service draws; display errors never stop boot.
-modprobe fb_st7789p3 && onekvm-boot-splash boot || :
+# The boot bar continues from U-Boot; the animator keeps it moving, survives
+# switch_root and stops when the screen service runs `finish`.
+splash=
+if modprobe fb_st7789p3 && onekvm-boot-splash --progress initramfs boot; then
+    splash=1
+    onekvm-boot-splash animate </dev/null >/dev/null 2>&1 &
+fi
 
 attempt=0
 until [ -b /dev/mmcblk1p1 ]; do
@@ -40,7 +237,27 @@ until [ -b /dev/mmcblk1p1 ]; do
     [ "$attempt" -lt 20 ] || fail 'SD boot partition not found'
     sleep 1
 done
+slot=
+for argument in $(cat /proc/cmdline); do
+    case "$argument" in
+        rauc.slot=A) slot=A ;;
+        rauc.slot=B) slot=B ;;
+    esac
+done
 mount -t vfat -o ro /dev/mmcblk1p1 /boot-config || fail 'cannot read SD boot configuration'
+if [ -n "$slot" ]; then
+    nfs_card=
+    [ ! -s /boot-config/onekvm/nfs-root ] || nfs_card=1
+    # Recovery mounts, exports and rewrites the card itself.
+    umount /boot-config || fail 'cannot release SD boot configuration'
+    if [ -z "$nfs_card" ] && ab_layout && [ ! -b /dev/mmcblk1p4 ]; then
+        # Recovery validates all four partitions: a new card gets userdata first.
+        create_userdata || echo 'OneKVM Go: cannot create userdata partition'
+    fi
+    # The NFS root never clears the boot counter, so it does not count.
+    if [ -n "$nfs_card" ]; then recovery_check 0; else recovery_check 1; fi
+    mount -t vfat -o ro /dev/mmcblk1p1 /boot-config || fail 'cannot read SD boot configuration'
+fi
 
 # Data files, never source shell code from the FAT partition. Secrets stay on SD.
 if [ -s /boot-config/onekvm/nfs-root ]; then
@@ -96,12 +313,22 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     # Keep supplicant alive across switch_root, with its config/control socket in /run.
     # It needs no files from the former initramfs once connected.
 else
-    mount -t ext4 -o rw /dev/mmcblk1p2 /newroot || fail 'SD root mount failed'
-    printf 'A\n' >/run/onekvm/boot-slot
+    if [ -n "$slot" ]; then
+        [ "$slot" != A ] || { [ ! -e "$root_file" ] && [ ! -e /boot-config/onekvm/install-b ]; } ||
+            first_boot_install
+        # U-Boot read boot-slot; persistence and RAUC read rauc.slot.
+        mount_ab_root "$slot"
+    else
+        # Single-root cards: no boot-slot file, ext4 root in p2.
+        mount -t ext4 -o rw /dev/mmcblk1p2 /newroot || fail 'SD root mount failed'
+        printf 'A\n' >/run/onekvm/boot-slot
+    fi
 fi
 # Resolve absolute /sbin/init symlinks inside the real root, not the initramfs.
 chroot /newroot /bin/sh -c 'test -x /sbin/init' || fail 'root has no init'
 umount /boot-config
+# Before /dev moves; the root system's units mark the next checkpoints.
+[ -z "$splash" ] || onekvm-boot-splash progress storage || :
 for dir in dev proc sys run; do
     mkdir -p "/newroot/$dir"
     mount --move "/$dir" "/newroot/$dir" || fail "cannot move $dir"
@@ -114,14 +341,6 @@ if [ -n "$nfs_wifi" ]; then
         mount -t sysfs sysfs /sys && mount --bind /newroot/run /run ||
         fail 'cannot keep Wi-Fi supplicant filesystems'
 fi
-# Move the feeder's root before switch_root deletes the old initramfs.
-kill -USR1 "$watchdog_pid"
-attempt=0
-until [ -e /newroot/run/onekvm/boot-watchdog.ready ]; do
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 10 ] || fail 'watchdog root handoff failed'
-    sleep 1
-done
 echo 'OneKVM Go: switching root; hardware watchdog remains armed'
 exec switch_root /newroot /sbin/init
 fail 'switch_root failed'

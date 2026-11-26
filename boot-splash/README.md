@@ -53,3 +53,33 @@ The OneKVM SD U-Boot uses the same English boot artwork. The Linux JD9853 driver
 keeps display scanout off through both reset/init passes and enables it only after
 its first full framebuffer transfer. This avoids briefly exposing stale GRAM
 between U-Boot and the early splash. The original eMMC U-Boot is unaffected.
+
+The NanoKVM Go U-Boot draws the same boot frame on the 240×284 ST7789P3 before
+Linux starts. `generate-assets.py --uboot-header PATH` writes it in the panel's
+native order as `onekvm_go_logo_runs`, the U-Boot source's
+`drivers/video/axera/bootlogo/onekvm_go_logo.h`.
+
+## Boot bar
+
+The boot screen carries a progress bar under the caption. Named checkpoints
+set it, and the screen service's first frame replaces it. Between checkpoints
+`animate` keeps it moving: steadily to 90% of the way to the next checkpoint
+over that stage's usual duration, then ever slower, never reaching it. Every
+writer only lengthens the fill. Bar updates go through a shared mapping, so the
+panel driver resends only the touched rows, and hold an advisory lock on the
+framebuffer that full-frame writes take too. `finish` stops the animator and
+waits for it to exit; the animator also stops when the bar disappears and after
+two minutes. `progress PERCENT|CHECKPOINT` changes nothing unless the panel
+shows a boot screen drawn by this program.
+
+On the Go, the U-Boot artwork includes the empty bar, and `--uboot-header` also
+writes its geometry (`ONEKVM_BAR_*`). U-Boot fills 2% once the kernel capsule is
+read and 4% before it starts Linux, and marks the Linux panel node
+`onekvm,boot-logo` so a kernel that knows it keeps the logo instead of resetting
+the panel. The initramfs then draws the boot screen at `initramfs`, starts
+`animate`, which survives switch_root, and marks `storage` just before
+switch_root. `systemd/onekvm-boot-progress-*.service` mark `early` when systemd
+starts units, `sysinit` and `basic`; they order only among themselves and never
+hold up a target. The screen service marks `screen` when it opens the panel and
+runs `finish` before its first frame. The Go percentages and durations in
+`boot_stages` come from three cold boots of a Go from an SD slot.

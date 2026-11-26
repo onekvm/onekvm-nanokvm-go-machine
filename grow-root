@@ -1,8 +1,10 @@
 #!/bin/sh
-# Grow only the owned two-partition Go SD layout, never an NFS root.
+# Grow only the owned two-partition Go SD layout, never an NFS root. The A/B
+# layout has an overlay root; its initramfs creates userdata up to the card end.
 set -eu
 [ ! -e /run/onekvm/nfs-wifi ] || exit 0
 [ "$(cat /usr/share/onekvm/machine)" = nanokvm-go ] || exit 1
+[ "$(findmnt -n -o FSTYPE /)" = ext4 ] || exit 0
 root_device=$(findmnt -n -o SOURCE /)
 [ "$(readlink -f "$root_device")" = /dev/mmcblk1p2 ] || exit 1
 [ "$(cat /sys/class/block/mmcblk1p2/start)" = 264192 ] || exit 1

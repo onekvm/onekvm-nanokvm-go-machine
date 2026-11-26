@@ -6,10 +6,11 @@
   "soc_name": "AX620Q",
   "video_auto_bitrate_max_kbps": 20000,
   "detected": { "wifi": true },
-  "capabilities": { "audio": true, "recovery": false },
+  "capabilities": { "audio": true, "ethernet": false, "recovery": true },
   "defaults": {
     "network.hostname": "onekvm-nanokvm-go",
     "video.fps": "60",
+    "audio.enabled": "false",
     "audio.device": "hw:UAC1Gadget,0",
     "audio.source": "hdmi",
     "usb.vendor_id": "0x359f",
@@ -17,10 +18,11 @@
   },
   "fixed": { "video.source_device": "/dev/video0" },
   "screen_display": {
-    "keyboard": "grid",
+    "keyboard": "nine",
     "keyboard_layout": "nanokvm-go.json",
-    "rotate": 0,
-    "rotation_offset": 0,
-    "rotations": [0, 90, 180, 270]
+    "rotate": 90,
+    "rotation_offset": 90,
+    "rotations": [0, 90, 180, 270],
+    "touch_calibration": [1, 0, 0, 0.0633, 1.1306, -0.0365]
   }
 }
